@@ -1,0 +1,49 @@
+name: Development task
+description: 记录 Group 9 的小步开发任务和可验证的验收结果
+title: "[F?] "
+body:
+  - type: dropdown
+    id: feature
+    attributes:
+      label: 功能区域
+      options:
+        - F1-F2 项目、成员与任务管理
+        - F3-F4 依赖与计划分析
+        - F5-F6 进度与风险监控
+        - 跨模块集成
+        - 文档与评估
+    validations:
+      required: true
+  - type: input
+    id: owner
+    attributes:
+      label: 功能负责人和协作者
+      description: 沿用 TEAM.md 的功能分工；填写参与者，不等同于 GitHub assignee。
+    validations:
+      required: true
+  - type: textarea
+    id: objective
+    attributes:
+      label: 要完成的行为
+      description: 写明需求 F/AC 编号、用户操作和预期结果。
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: 涉及模块与依赖
+      description: 写明文件/模块、前置任务和需同步的数据约定。
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收步骤与期望
+      description: 使用可重复的输入及结果；计划计算注明 fixture ID。
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 完成后补充的证据
+      description: PR、测试输出、手动验收或评估记录；保留失败和未执行项。

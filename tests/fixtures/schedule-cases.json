@@ -1,0 +1,909 @@
+{
+  "schemaVersion": 1,
+  "status": "planned-acceptance-fixtures-not-executed",
+  "sourceDocument": {
+    "filename": "Student_Project_Planning_and_Progress_Tracking_System_Proposal.pdf",
+    "sha256": "fe4ebb90d740d20360cd2db938eedc3281665e6c06f3339b3c676c71c2d937db",
+    "publishedInRepository": false
+  },
+  "timingConvention": {
+    "unit": "elapsed-calendar-days",
+    "projectStart": 0,
+    "relationship": "finish-to-start",
+    "terminalLatestFinish": "calculated-project-duration",
+    "criticalTaskIdsMeaning": "unordered set of tasks with zero total float",
+    "emptyProject": "duration baseline 0; progress display No tasks yet without division",
+    "durationPrecisionDecision": "pending Week 1; integer examples do not constrain supported precision"
+  },
+  "scheduleCases": [
+    {
+      "id": "proposal-original-8-days",
+      "source": "Proposal page 5 section 9.4",
+      "tasks": [
+        {
+          "id": "A",
+          "durationDays": 2,
+          "prerequisiteIds": []
+        },
+        {
+          "id": "B",
+          "durationDays": 3,
+          "prerequisiteIds": [
+            "A"
+          ]
+        },
+        {
+          "id": "C",
+          "durationDays": 4,
+          "prerequisiteIds": [
+            "A"
+          ]
+        },
+        {
+          "id": "D",
+          "durationDays": 2,
+          "prerequisiteIds": [
+            "B",
+            "C"
+          ]
+        }
+      ],
+      "expected": {
+        "durationDays": 8,
+        "criticalTaskIds": [
+          "A",
+          "C",
+          "D"
+        ],
+        "timings": {
+          "A": {
+            "earliestStart": 0,
+            "earliestFinish": 2,
+            "latestStart": 0,
+            "latestFinish": 2,
+            "totalFloat": 0
+          },
+          "B": {
+            "earliestStart": 2,
+            "earliestFinish": 5,
+            "latestStart": 3,
+            "latestFinish": 6,
+            "totalFloat": 1
+          },
+          "C": {
+            "earliestStart": 2,
+            "earliestFinish": 6,
+            "latestStart": 2,
+            "latestFinish": 6,
+            "totalFloat": 0
+          },
+          "D": {
+            "earliestStart": 6,
+            "earliestFinish": 8,
+            "latestStart": 6,
+            "latestFinish": 8,
+            "totalFloat": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "proposal-c-6-days",
+      "source": "Proposal page 5 section 9.4; page 6 section 11",
+      "tasks": [
+        {
+          "id": "A",
+          "durationDays": 2,
+          "prerequisiteIds": []
+        },
+        {
+          "id": "B",
+          "durationDays": 3,
+          "prerequisiteIds": [
+            "A"
+          ]
+        },
+        {
+          "id": "C",
+          "durationDays": 6,
+          "prerequisiteIds": [
+            "A"
+          ]
+        },
+        {
+          "id": "D",
+          "durationDays": 2,
+          "prerequisiteIds": [
+            "B",
+            "C"
+          ]
+        }
+      ],
+      "expected": {
+        "durationDays": 10,
+        "criticalTaskIds": [
+          "A",
+          "C",
+          "D"
+        ],
+        "timings": {
+          "A": {
+            "earliestStart": 0,
+            "earliestFinish": 2,
+            "latestStart": 0,
+            "latestFinish": 2,
+            "totalFloat": 0
+          },
+          "B": {
+            "earliestStart": 2,
+            "earliestFinish": 5,
+            "latestStart": 5,
+            "latestFinish": 8,
+            "totalFloat": 3
+          },
+          "C": {
+            "earliestStart": 2,
+            "earliestFinish": 8,
+            "latestStart": 2,
+            "latestFinish": 8,
+            "totalFloat": 0
+          },
+          "D": {
+            "earliestStart": 8,
+            "earliestFinish": 10,
+            "latestStart": 8,
+            "latestFinish": 10,
+            "totalFloat": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "proposal-remove-c-to-d",
+      "source": "Proposal page 6 section 11; original C remains with duration 4",
+      "tasks": [
+        {
+          "id": "A",
+          "durationDays": 2,
+          "prerequisiteIds": []
+        },
+        {
+          "id": "B",
+          "durationDays": 3,
+          "prerequisiteIds": [
+            "A"
+          ]
+        },
+        {
+          "id": "C",
+          "durationDays": 4,
+          "prerequisiteIds": [
+            "A"
+          ]
+        },
+        {
+          "id": "D",
+          "durationDays": 2,
+          "prerequisiteIds": [
+            "B"
+          ]
+        }
+      ],
+      "expected": {
+        "durationDays": 7,
+        "criticalTaskIds": [
+          "A",
+          "B",
+          "D"
+        ],
+        "timings": {
+          "A": {
+            "earliestStart": 0,
+            "earliestFinish": 2,
+            "latestStart": 0,
+            "latestFinish": 2,
+            "totalFloat": 0
+          },
+          "B": {
+            "earliestStart": 2,
+            "earliestFinish": 5,
+            "latestStart": 2,
+            "latestFinish": 5,
+            "totalFloat": 0
+          },
+          "C": {
+            "earliestStart": 2,
+            "earliestFinish": 6,
+            "latestStart": 3,
+            "latestFinish": 7,
+            "totalFloat": 1
+          },
+          "D": {
+            "earliestStart": 5,
+            "earliestFinish": 7,
+            "latestStart": 5,
+            "latestFinish": 7,
+            "totalFloat": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "equal-critical-branches",
+      "source": "Manual acceptance example for proposal section 11: equal critical paths",
+      "tasks": [
+        {
+          "id": "A",
+          "durationDays": 2,
+          "prerequisiteIds": []
+        },
+        {
+          "id": "B",
+          "durationDays": 3,
+          "prerequisiteIds": [
+            "A"
+          ]
+        },
+        {
+          "id": "C",
+          "durationDays": 3,
+          "prerequisiteIds": [
+            "A"
+          ]
+        },
+        {
+          "id": "D",
+          "durationDays": 2,
+          "prerequisiteIds": [
+            "B",
+            "C"
+          ]
+        }
+      ],
+      "expected": {
+        "durationDays": 7,
+        "criticalTaskIds": [
+          "A",
+          "B",
+          "C",
+          "D"
+        ],
+        "timings": {
+          "A": {
+            "earliestStart": 0,
+            "earliestFinish": 2,
+            "latestStart": 0,
+            "latestFinish": 2,
+            "totalFloat": 0
+          },
+          "B": {
+            "earliestStart": 2,
+            "earliestFinish": 5,
+            "latestStart": 2,
+            "latestFinish": 5,
+            "totalFloat": 0
+          },
+          "C": {
+            "earliestStart": 2,
+            "earliestFinish": 5,
+            "latestStart": 2,
+            "latestFinish": 5,
+            "totalFloat": 0
+          },
+          "D": {
+            "earliestStart": 5,
+            "earliestFinish": 7,
+            "latestStart": 5,
+            "latestFinish": 7,
+            "totalFloat": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "independent-tasks",
+      "source": "Manual acceptance example for proposal section 11: independent tasks",
+      "tasks": [
+        {
+          "id": "A",
+          "durationDays": 2,
+          "prerequisiteIds": []
+        },
+        {
+          "id": "B",
+          "durationDays": 5,
+          "prerequisiteIds": []
+        },
+        {
+          "id": "C",
+          "durationDays": 3,
+          "prerequisiteIds": []
+        }
+      ],
+      "expected": {
+        "durationDays": 5,
+        "criticalTaskIds": [
+          "B"
+        ],
+        "timings": {
+          "A": {
+            "earliestStart": 0,
+            "earliestFinish": 2,
+            "latestStart": 3,
+            "latestFinish": 5,
+            "totalFloat": 3
+          },
+          "B": {
+            "earliestStart": 0,
+            "earliestFinish": 5,
+            "latestStart": 0,
+            "latestFinish": 5,
+            "totalFloat": 0
+          },
+          "C": {
+            "earliestStart": 0,
+            "earliestFinish": 3,
+            "latestStart": 2,
+            "latestFinish": 5,
+            "totalFloat": 2
+          }
+        }
+      }
+    },
+    {
+      "id": "simple-chain",
+      "source": "Manual acceptance example for proposal section 11: chain",
+      "tasks": [
+        {
+          "id": "A",
+          "durationDays": 1,
+          "prerequisiteIds": []
+        },
+        {
+          "id": "B",
+          "durationDays": 2,
+          "prerequisiteIds": [
+            "A"
+          ]
+        },
+        {
+          "id": "C",
+          "durationDays": 3,
+          "prerequisiteIds": [
+            "B"
+          ]
+        }
+      ],
+      "expected": {
+        "durationDays": 6,
+        "criticalTaskIds": [
+          "A",
+          "B",
+          "C"
+        ],
+        "timings": {
+          "A": {
+            "earliestStart": 0,
+            "earliestFinish": 1,
+            "latestStart": 0,
+            "latestFinish": 1,
+            "totalFloat": 0
+          },
+          "B": {
+            "earliestStart": 1,
+            "earliestFinish": 3,
+            "latestStart": 1,
+            "latestFinish": 3,
+            "totalFloat": 0
+          },
+          "C": {
+            "earliestStart": 3,
+            "earliestFinish": 6,
+            "latestStart": 3,
+            "latestFinish": 6,
+            "totalFloat": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "two-roots-merge",
+      "source": "Manual acceptance example for proposal section 11: merge",
+      "tasks": [
+        {
+          "id": "A",
+          "durationDays": 2,
+          "prerequisiteIds": []
+        },
+        {
+          "id": "B",
+          "durationDays": 4,
+          "prerequisiteIds": []
+        },
+        {
+          "id": "C",
+          "durationDays": 3,
+          "prerequisiteIds": [
+            "A",
+            "B"
+          ]
+        }
+      ],
+      "expected": {
+        "durationDays": 7,
+        "criticalTaskIds": [
+          "B",
+          "C"
+        ],
+        "timings": {
+          "A": {
+            "earliestStart": 0,
+            "earliestFinish": 2,
+            "latestStart": 2,
+            "latestFinish": 4,
+            "totalFloat": 2
+          },
+          "B": {
+            "earliestStart": 0,
+            "earliestFinish": 4,
+            "latestStart": 0,
+            "latestFinish": 4,
+            "totalFloat": 0
+          },
+          "C": {
+            "earliestStart": 4,
+            "earliestFinish": 7,
+            "latestStart": 4,
+            "latestFinish": 7,
+            "totalFloat": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "single-task",
+      "source": "Manual acceptance example for proposal section 11: single task",
+      "tasks": [
+        {
+          "id": "A",
+          "durationDays": 3,
+          "prerequisiteIds": []
+        }
+      ],
+      "expected": {
+        "durationDays": 3,
+        "criticalTaskIds": [
+          "A"
+        ],
+        "timings": {
+          "A": {
+            "earliestStart": 0,
+            "earliestFinish": 3,
+            "latestStart": 0,
+            "latestFinish": 3,
+            "totalFloat": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "empty-project",
+      "source": "Manual acceptance example for proposal section 11: empty project; section 9.5 displays No tasks yet",
+      "tasks": [],
+      "expected": {
+        "durationDays": 0,
+        "criticalTaskIds": [],
+        "timings": {}
+      }
+    },
+    {
+      "id": "branch-without-merge",
+      "source": "Manual acceptance example for proposal section 11: branches with separate terminal tasks",
+      "tasks": [
+        {
+          "id": "A",
+          "durationDays": 2,
+          "prerequisiteIds": []
+        },
+        {
+          "id": "B",
+          "durationDays": 4,
+          "prerequisiteIds": [
+            "A"
+          ]
+        },
+        {
+          "id": "C",
+          "durationDays": 1,
+          "prerequisiteIds": [
+            "A"
+          ]
+        }
+      ],
+      "expected": {
+        "durationDays": 6,
+        "criticalTaskIds": [
+          "A",
+          "B"
+        ],
+        "timings": {
+          "A": {
+            "earliestStart": 0,
+            "earliestFinish": 2,
+            "latestStart": 0,
+            "latestFinish": 2,
+            "totalFloat": 0
+          },
+          "B": {
+            "earliestStart": 2,
+            "earliestFinish": 6,
+            "latestStart": 2,
+            "latestFinish": 6,
+            "totalFloat": 0
+          },
+          "C": {
+            "earliestStart": 2,
+            "earliestFinish": 3,
+            "latestStart": 5,
+            "latestFinish": 6,
+            "totalFloat": 3
+          }
+        }
+      }
+    },
+    {
+      "id": "two-critical-root-sequences",
+      "source": "Manual acceptance example for proposal section 11: multiple roots, merge and equal critical paths",
+      "tasks": [
+        {
+          "id": "A",
+          "durationDays": 1,
+          "prerequisiteIds": []
+        },
+        {
+          "id": "B",
+          "durationDays": 2,
+          "prerequisiteIds": []
+        },
+        {
+          "id": "C",
+          "durationDays": 3,
+          "prerequisiteIds": [
+            "A"
+          ]
+        },
+        {
+          "id": "D",
+          "durationDays": 2,
+          "prerequisiteIds": [
+            "B"
+          ]
+        },
+        {
+          "id": "E",
+          "durationDays": 1,
+          "prerequisiteIds": [
+            "C",
+            "D"
+          ]
+        }
+      ],
+      "expected": {
+        "durationDays": 5,
+        "criticalTaskIds": [
+          "A",
+          "B",
+          "C",
+          "D",
+          "E"
+        ],
+        "timings": {
+          "A": {
+            "earliestStart": 0,
+            "earliestFinish": 1,
+            "latestStart": 0,
+            "latestFinish": 1,
+            "totalFloat": 0
+          },
+          "B": {
+            "earliestStart": 0,
+            "earliestFinish": 2,
+            "latestStart": 0,
+            "latestFinish": 2,
+            "totalFloat": 0
+          },
+          "C": {
+            "earliestStart": 1,
+            "earliestFinish": 4,
+            "latestStart": 1,
+            "latestFinish": 4,
+            "totalFloat": 0
+          },
+          "D": {
+            "earliestStart": 2,
+            "earliestFinish": 4,
+            "latestStart": 2,
+            "latestFinish": 4,
+            "totalFloat": 0
+          },
+          "E": {
+            "earliestStart": 4,
+            "earliestFinish": 5,
+            "latestStart": 4,
+            "latestFinish": 5,
+            "totalFloat": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "disconnected-chains",
+      "source": "Manual acceptance example for proposal section 11: independent chains and noncritical float",
+      "tasks": [
+        {
+          "id": "A",
+          "durationDays": 2,
+          "prerequisiteIds": []
+        },
+        {
+          "id": "B",
+          "durationDays": 2,
+          "prerequisiteIds": [
+            "A"
+          ]
+        },
+        {
+          "id": "C",
+          "durationDays": 1,
+          "prerequisiteIds": []
+        },
+        {
+          "id": "D",
+          "durationDays": 2,
+          "prerequisiteIds": [
+            "C"
+          ]
+        }
+      ],
+      "expected": {
+        "durationDays": 4,
+        "criticalTaskIds": [
+          "A",
+          "B"
+        ],
+        "timings": {
+          "A": {
+            "earliestStart": 0,
+            "earliestFinish": 2,
+            "latestStart": 0,
+            "latestFinish": 2,
+            "totalFloat": 0
+          },
+          "B": {
+            "earliestStart": 2,
+            "earliestFinish": 4,
+            "latestStart": 2,
+            "latestFinish": 4,
+            "totalFloat": 0
+          },
+          "C": {
+            "earliestStart": 0,
+            "earliestFinish": 1,
+            "latestStart": 1,
+            "latestFinish": 2,
+            "totalFloat": 1
+          },
+          "D": {
+            "earliestStart": 1,
+            "earliestFinish": 3,
+            "latestStart": 2,
+            "latestFinish": 4,
+            "totalFloat": 1
+          }
+        }
+      }
+    }
+  ],
+  "invalidDependencyCases": [
+    {
+      "id": "reject-self-link",
+      "source": "Proposal page 4 section 9.2; page 6 section 11",
+      "previousPlan": {
+        "tasks": [
+          {
+            "id": "A",
+            "durationDays": 2,
+            "prerequisiteIds": [],
+            "projectId": "P1"
+          }
+        ]
+      },
+      "proposedChange": {
+        "operation": "addPrerequisite",
+        "taskId": "A",
+        "prerequisiteId": "A"
+      },
+      "expected": {
+        "accepted": false,
+        "reasonCode": "SELF_DEPENDENCY",
+        "clearRejectionRequired": true,
+        "requiredExplanation": "Name A and explain that a task cannot require itself.",
+        "previousPlanUnchanged": true
+      }
+    },
+    {
+      "id": "reject-duplicate-link",
+      "source": "Proposal page 4 section 9.2; page 6 section 11",
+      "previousPlan": {
+        "tasks": [
+          {
+            "id": "A",
+            "durationDays": 2,
+            "prerequisiteIds": [],
+            "projectId": "P1"
+          },
+          {
+            "id": "B",
+            "durationDays": 3,
+            "prerequisiteIds": [
+              "A"
+            ],
+            "projectId": "P1"
+          }
+        ]
+      },
+      "proposedChange": {
+        "operation": "addPrerequisite",
+        "taskId": "B",
+        "prerequisiteId": "A"
+      },
+      "expected": {
+        "accepted": false,
+        "reasonCode": "DUPLICATE_DEPENDENCY",
+        "clearRejectionRequired": true,
+        "requiredExplanation": "Name the existing prerequisite relationship A to B.",
+        "previousPlanUnchanged": true
+      }
+    },
+    {
+      "id": "reject-cross-project-link",
+      "source": "Proposal page 4 section 9.2; page 6 section 11",
+      "previousPlan": {
+        "tasks": [
+          {
+            "id": "A",
+            "durationDays": 2,
+            "prerequisiteIds": [],
+            "projectId": "P1"
+          },
+          {
+            "id": "B",
+            "durationDays": 3,
+            "prerequisiteIds": [],
+            "projectId": "P2"
+          }
+        ]
+      },
+      "proposedChange": {
+        "operation": "addPrerequisite",
+        "taskId": "B",
+        "prerequisiteId": "A"
+      },
+      "expected": {
+        "accepted": false,
+        "reasonCode": "CROSS_PROJECT_DEPENDENCY",
+        "clearRejectionRequired": true,
+        "requiredExplanation": "Explain that A and B belong to different projects.",
+        "previousPlanUnchanged": true
+      }
+    },
+    {
+      "id": "reject-direct-cycle",
+      "source": "Proposal page 4 section 9.2; page 6 section 11",
+      "previousPlan": {
+        "tasks": [
+          {
+            "id": "A",
+            "durationDays": 2,
+            "prerequisiteIds": [],
+            "projectId": "P1"
+          },
+          {
+            "id": "B",
+            "durationDays": 3,
+            "prerequisiteIds": [
+              "A"
+            ],
+            "projectId": "P1"
+          }
+        ]
+      },
+      "proposedChange": {
+        "operation": "addPrerequisite",
+        "taskId": "A",
+        "prerequisiteId": "B"
+      },
+      "expected": {
+        "accepted": false,
+        "reasonCode": "CYCLE",
+        "clearRejectionRequired": true,
+        "requiredExplanation": "Name the cycle A to B to A, or an equivalent rotation.",
+        "previousPlanUnchanged": true
+      }
+    },
+    {
+      "id": "reject-indirect-cycle",
+      "source": "Proposal page 4 section 9.2; page 6 section 11",
+      "previousPlan": {
+        "tasks": [
+          {
+            "id": "A",
+            "durationDays": 2,
+            "prerequisiteIds": [],
+            "projectId": "P1"
+          },
+          {
+            "id": "B",
+            "durationDays": 3,
+            "prerequisiteIds": [
+              "A"
+            ],
+            "projectId": "P1"
+          },
+          {
+            "id": "C",
+            "durationDays": 1,
+            "prerequisiteIds": [
+              "B"
+            ],
+            "projectId": "P1"
+          }
+        ]
+      },
+      "proposedChange": {
+        "operation": "addPrerequisite",
+        "taskId": "A",
+        "prerequisiteId": "C"
+      },
+      "expected": {
+        "accepted": false,
+        "reasonCode": "CYCLE",
+        "clearRejectionRequired": true,
+        "requiredExplanation": "Name the cycle A to B to C to A, or an equivalent rotation.",
+        "previousPlanUnchanged": true
+      }
+    },
+    {
+      "id": "reject-nonexistent-task",
+      "source": "Proposal page 4 section 9.2; page 6 section 11",
+      "previousPlan": {
+        "tasks": [
+          {
+            "id": "A",
+            "durationDays": 2,
+            "prerequisiteIds": [],
+            "projectId": "P1"
+          },
+          {
+            "id": "B",
+            "durationDays": 3,
+            "prerequisiteIds": [],
+            "projectId": "P1"
+          }
+        ]
+      },
+      "proposedChange": {
+        "operation": "addPrerequisite",
+        "taskId": "B",
+        "prerequisiteId": "MISSING"
+      },
+      "expected": {
+        "accepted": false,
+        "reasonCode": "TASK_NOT_FOUND",
+        "clearRejectionRequired": true,
+        "requiredExplanation": "Explain that the prerequisite task MISSING does not exist.",
+        "previousPlanUnchanged": true
+      }
+    }
+  ]
+}
