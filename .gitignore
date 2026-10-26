@@ -31,3 +31,10 @@ coverage/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Internal review evidence stays local; publish only approved project documents.
+/final_verification*.json
+/final_manifest*.json
+/evidence_alignment*.json
+/wording_clarification*.json
+/review_evidence_wording*.py
