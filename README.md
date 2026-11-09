@@ -86,3 +86,15 @@ Proposal 计划自正式开工起约八周完成 Web 原型，并提交用户指
 ## 本轮统一协议
 
 TaskStatus 使用 NOT_STARTED / IN_PROGRESS / COMPLETED；BLOCKED 是可未知的独立警告。项目日期为 plannedStartDate/projectDeadline，任务日期为 taskDeadline。源快照用 revision，修改用 expectedRevision，派生结果用 sourceRevision；源变更仅成功提交后递增一次。F4 或 F3 能力失败时，可靠基础 Dashboard 继续，并明确未知能力；不得把缺失关键集合或预计日期解释为无风险。完整协议与仍待确认的日期/生命周期规则见[架构说明](docs/ARCHITECTURE.md)。
+
+## Portfolio overview and development milestone — 2026-11-09
+
+The Student Project Planning and Progress Tracking System explores how university project teams can assign tasks, model dependencies, follow progress, and interpret schedule warnings. The design separates the user interface, application services, and scheduling logic. This lets the scheduling logic evaluate planned work and dependencies while the interface presents progress and risks to the team.
+
+**Verified milestone.** The recovered development baseline contains 75 source and configuration files that passed SHA-256 integrity checks. A historical test run on 2026-11-06 recorded 25 passing unit tests and 58 passing integration tests in the scoped baseline suite.
+
+**Next milestones.** Connect the separate modules, validate the end-to-end workflows, and complete system acceptance before considering a release.
+
+- [Project status and test results](docs/project-status/PROJECT_STATUS_2026-11-09.md)
+- [System overview](docs/architecture/SYSTEM_OVERVIEW.md)
+- [Development roadmap](docs/roadmap/DEVELOPMENT_ROADMAP.md)
