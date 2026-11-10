@@ -38,3 +38,13 @@ Desktop.ini
 /evidence_alignment*.json
 /wording_clarification*.json
 /review_evidence_wording*.py
+
+# G1 SQLite sidecars and TypeScript/Vite build metadata
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.db-wal
+*.db-shm
+*.tsbuildinfo
+.vite/

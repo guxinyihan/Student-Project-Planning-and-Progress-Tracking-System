@@ -1,0 +1,19 @@
+{
+  "name": "@group9/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch server.ts",
+    "build": "tsc -b",
+    "start": "node dist/server.js",
+    "migrate:dev": "tsx persistence/migrate-dev.ts"
+  },
+  "dependencies": {
+    "@group9/shared": "0.1.0",
+    "@group9/domain": "0.1.0",
+    "express": "5.3.0",
+    "drizzle-orm": "0.45.4",
+    "better-sqlite3": "13.0.3"
+  }
+}

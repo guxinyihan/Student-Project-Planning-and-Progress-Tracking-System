@@ -1,0 +1,55 @@
+{
+  "name": "group9-student-project-planning",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.18.0 <25"
+  },
+  "workspaces": [
+    "src/shared",
+    "src/domain",
+    "src/backend",
+    "src/frontend"
+  ],
+  "scripts": {
+    "build:core": "tsc -b src/shared src/domain",
+    "dev": "npm run build:core && concurrently --kill-others -n contracts,backend,frontend \"tsc -b src/shared src/domain --watch --preserveWatchOutput\" \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "npm run dev --workspace @group9/backend",
+    "dev:frontend": "npm run dev --workspace @group9/frontend",
+    "build": "tsc -b src/shared src/domain src/backend && npm run build --workspace @group9/frontend",
+    "typecheck": "npm run build:core && tsc -p tsconfig.check.json && npm run typecheck --workspace @group9/frontend",
+    "lint": "eslint src tests vitest.config.ts eslint.config.mjs",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css,html,json}\" \"tests/**/*.{ts,tsx}\" \"*.{json,ts,mjs}\"",
+    "test": "npm run build:core && vitest run",
+    "test:unit": "npm run build:core && vitest run --project unit",
+    "test:api": "npm run build:core && vitest run --project api",
+    "test:integration": "npm run build:core && vitest run --project integration",
+    "test:components": "npm run build:core && vitest run --project components",
+    "start:backend": "npm run start --workspace @group9/backend",
+    "preview:frontend": "npm run preview --workspace @group9/frontend",
+    "db:migrate:dev": "npm run migrate:dev --workspace @group9/backend"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3",
+    "vitest": "5.0.5",
+    "supertest": "7.3.1",
+    "@testing-library/react": "16.3.3",
+    "@testing-library/dom": "10.4.2",
+    "@testing-library/jest-dom": "7.0.1",
+    "jsdom": "30.1.3",
+    "eslint": "10.13.0",
+    "@eslint/js": "10.0.1",
+    "typescript-eslint": "8.72.1",
+    "prettier": "3.9.10",
+    "tsx": "4.23.15",
+    "concurrently": "10.0.6",
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/express": "5.0.6",
+    "@types/better-sqlite3": "9.6.0",
+    "@types/supertest": "7.2.1",
+    "globals": "17.13.0"
+  }
+}
