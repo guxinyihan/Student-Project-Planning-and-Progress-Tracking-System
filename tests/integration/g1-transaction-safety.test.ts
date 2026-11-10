@@ -1,453 +1,422 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setImmediate as nextTurn } from 'node:timers/promises';
-import { asDependencyId, asProjectId, asRevision, asTaskId, asUserId } from '@group9/shared';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { asDependencyId, asProjectId, asTaskId } from '@group9/shared';
 import type {
-  DependencyRepository,
-  ManagementRepository,
-  SourceTransaction,
+  BatchCapability,
+  OperationCapability,
+  TaskNameCapability,
 } from '../../src/backend/application/unit-of-work.js';
-import { createSourceUnitOfWork } from '../../src/backend/persistence/source-unit-of-work.js';
-import type { FoundationDatabase } from '../../src/backend/persistence/connection.js';
-import { openFoundationDatabase } from '../../src/backend/persistence/connection.js';
-import { relative } from 'node:path';
 import {
-  createSeededFoundationDatabase,
-  foundationWorkspaceRoot,
-} from '../fixtures/g1-database.js';
-const opened: FoundationDatabase[] = [];
-function fixture() {
-  const db = createSeededFoundationDatabase();
-  opened.push(db);
-  return db;
+  commandBatch,
+  commandInsert,
+  commandName,
+  createHarnessFixture,
+  openOwnedDisposable,
+  revision,
+  sourceState,
+} from '../fixtures/g1-b2-disposable-database.js';
+
+type Fixture = ReturnType<typeof createHarnessFixture>;
+const fixtures: Fixture[] = [];
+function fixture(options: Parameters<typeof createHarnessFixture>[0] = {}) {
+  const result = createHarnessFixture(options);
+  fixtures.push(result);
+  return result;
 }
-function input(revision = 1) {
-  return {
-    verifiedActorId: asUserId('U1'),
-    projectId: asProjectId('P1'),
-    expectedRevision: asRevision(revision),
-    authorize: () => {},
-  };
+function nameFixture(handler: (capability: TaskNameCapability) => unknown) {
+  return fixture({ handlers: { 'F2-07': (capability) => handler(capability as TaskNameCapability) } });
 }
-const task = (id: string) => asTaskId(id);
-function rows(db: FoundationDatabase) {
-  return db.sqlite.prepare('SELECT task_id,name FROM tasks ORDER BY task_id').all();
-}
-function revisions(db: FoundationDatabase) {
-  return db.sqlite.prepare('SELECT project_id,revision FROM projects ORDER BY project_id').all();
-}
-function link(id = 'L2', prerequisite = 'B', dependent = 'A') {
+function edge(id: string, from: string, to: string) {
   return {
     dependencyId: asDependencyId(id),
-    prerequisiteId: task(prerequisite),
-    dependentId: task(dependent),
+    prerequisiteId: asTaskId(from),
+    dependentId: asTaskId(to),
   };
 }
+function expectClosed(operation: () => unknown) {
+  expect(operation).toThrow(expect.objectContaining({ code: 'TRANSACTION_CLOSED' }));
+}
+
 afterEach(() => {
-  vi.restoreAllMocks();
-  for (const db of opened.splice(0)) db.close();
+  for (const item of fixtures.splice(0)) item.close();
 });
 
 describe('TX-01 transaction lifetime and async regression', () => {
-  it('TX01-T01 rolls back immediate write and rejects late captured capability without unhandled rejection', async () => {
-    const db = fixture();
-    const before = rows(db);
-    const beforeRev = revisions(db);
-    let continuation: Promise<unknown> | undefined;
+  it('TX01-T01 rolls back staged work and rejects late capability use without unhandled rejection', async () => {
+    let continuation: Promise<void> | undefined;
     let lateError: unknown;
+    const f = nameFixture((capability) => {
+      capability.stageTaskAllowedFields({ name: 'immediate' });
+      continuation = Promise.resolve().then(() => {
+        try {
+          capability.stageTaskAllowedFields({ name: 'late' });
+        } catch (error) {
+          lateError = error;
+          throw error;
+        }
+      });
+      return continuation;
+    });
+    const before = sourceState(f.sqlite);
     const unhandled: unknown[] = [];
     const listener = (reason: unknown) => unhandled.push(reason);
     process.on('unhandledRejection', listener);
     try {
-      expect(() =>
-        createSourceUnitOfWork(db.sqlite).run(
-          input(),
-          // @ts-expect-error Intentionally bypass compile-time rejection to exercise runtime enforcement.
-          (tx) => {
-            tx.management.updateTaskName(task('A'), 'immediate');
-            continuation = Promise.resolve().then(() => {
-              try {
-                tx.management.updateTaskName(task('B'), 'late');
-              } catch (error) {
-                lateError = error;
-                throw error;
-              }
-            });
-            return continuation;
-          },
-        ),
-      ).toThrow('must be synchronous');
-      // Deliberately do not attach a test rejection handler to continuation: adapter must consume it.
+      expect(() => f.dispatcher.dispatch(commandName())).toThrow('must be synchronous');
       await nextTurn();
-      expect(lateError).toMatchObject({ code: 'TRANSACTION_CLOSED' });
       expect(continuation).toBeInstanceOf(Promise);
-      expect(rows(db)).toEqual(before);
-      expect(revisions(db)).toEqual(beforeRev);
+      expect(lateError).toMatchObject({ code: 'TRANSACTION_CLOSED' });
       expect(unhandled).toEqual([]);
+      expect(sourceState(f.sqlite)).toEqual(before);
     } finally {
       process.off('unhandledRejection', listener);
     }
   });
-  it('TX01-T02 retained management reference cannot write after a successful transaction', () => {
-    const db = fixture();
-    let retained: ManagementRepository | undefined;
-    createSourceUnitOfWork(db.sqlite).run(input(), (tx) => {
-      retained = tx.management;
-      tx.management.updateTaskName(task('A'), 'committed');
+
+  it('TX01-T02 retained name capability cannot write after a successful transaction', () => {
+    let retained: TaskNameCapability | undefined;
+    const f = nameFixture((capability) => {
+      retained = capability;
+      capability.stageTaskAllowedFields({ name: 'committed' });
     });
-    const committed = rows(db);
-    const revision = revisions(db);
-    expect(() => retained!.updateTaskName(task('B'), 'late')).toThrow('inactive');
-    expect(rows(db)).toEqual(committed);
-    expect(revisions(db)).toEqual(revision);
+    const result = f.dispatcher.dispatch(commandName('committed'));
+    expect(result).toMatchObject({ revision: 2, value: { taskId: 'A', name: 'committed' } });
+    const committed = sourceState(f.sqlite);
+    expectClosed(() => retained!.stageTaskAllowedFields({ name: 'late' }));
+    expect(sourceState(f.sqlite)).toEqual(committed);
   });
-  it('TX01-T03 retained dependency repository cannot read or write after closure', () => {
-    const db = fixture();
-    let retained: DependencyRepository | undefined;
-    createSourceUnitOfWork(db.sqlite).run(input(), (tx) => {
-      retained = tx.dependencies;
-      tx.management.updateTaskName(task('A'), 'committed');
+
+  it('TX01-T03 the dependency capability grants no read and neither intent works after closure', () => {
+    let retained: BatchCapability | undefined;
+    const f = fixture({ handlers: { 'F3-06': (capability) => {
+      retained = capability as BatchCapability;
+      expect(Object.keys(retained)).toEqual(['stageDependencyInsert', 'stageDependencyRemove']);
+      retained.stageDependencyRemove();
+      retained.stageDependencyInsert();
+    } } });
+    const result = f.dispatcher.dispatch(commandBatch([edge('L2', 'A', 'B')], ['L1']));
+    expect(result).toMatchObject({ revision: 2, value: { inserted: ['L2'], removed: ['L1'] } });
+    const committed = sourceState(f.sqlite);
+    expectClosed(() => retained!.stageDependencyInsert());
+    expectClosed(() => retained!.stageDependencyRemove());
+    expect(sourceState(f.sqlite)).toEqual(committed);
+  });
+
+  it('TX01-T04 a thrown handler rolls back staged work and invalidates the retained capability', () => {
+    let retained: TaskNameCapability | undefined;
+    const f = nameFixture((capability) => {
+      retained = capability;
+      capability.stageTaskAllowedFields({ name: 'rollback' });
+      throw new Error('injected handler failure');
     });
-    expect(() => retained!.list()).toThrow('inactive');
-    expect(() => retained!.add(link())).toThrow('inactive');
-    expect(() => retained!.remove(asDependencyId('L1'))).toThrow('inactive');
-    expect(db.sqlite.prepare('SELECT count(*) AS n FROM task_dependencies').get()).toEqual({
-      n: 1,
-    });
+    const before = sourceState(f.sqlite);
+    expect(() => f.dispatcher.dispatch(commandName())).toThrow('injected handler failure');
+    expectClosed(() => retained!.readTaskToUpdateFields());
+    expect(sourceState(f.sqlite)).toEqual(before);
+    expect(f.uow.diagnostics()).toMatchObject([{ outcome: 'ROLLED_BACK' }]);
   });
-  it('TX01-T04 thrown callback rolls back all writes and invalidates retained capability', () => {
-    const db = fixture();
-    const before = rows(db);
-    let retained: ManagementRepository | undefined;
-    expect(() =>
-      createSourceUnitOfWork(db.sqlite).run(input(), (tx) => {
-        retained = tx.management;
-        tx.management.updateTaskName(task('A'), 'rollback');
-        throw new Error('injected callback failure');
-      }),
-    ).toThrow('injected callback failure');
-    expect(() => retained!.getTask(task('A'))).toThrow('inactive');
-    expect(rows(db)).toEqual(before);
-    expect(revisions(db)).toEqual([
-      { project_id: 'P1', revision: 1 },
-      { project_id: 'P2', revision: 1 },
-    ]);
-  });
-  it('TX01-T05 custom PromiseLike assimilation sees inactive repositories and rejects safely', async () => {
-    const db = fixture();
-    const before = rows(db);
+
+  it('TX01-T05 custom PromiseLike assimilation sees inactive capabilities and rejects safely', async () => {
     let ran = false;
     let lateError: unknown;
-    expect(() =>
-      createSourceUnitOfWork(db.sqlite).run(
-        input(),
-        // @ts-expect-error Custom thenable passed as untyped input for runtime regression.
-        (tx) => {
-          tx.management.updateTaskName(task('A'), 'rollback');
-          return {
-            then(_resolve: (value: unknown) => void, reject: (reason: unknown) => void) {
-              ran = true;
-              try {
-                tx.management.updateTaskName(task('B'), 'late');
-              } catch (error) {
-                lateError = error;
-                reject(error);
-              }
-            },
-          };
+    const f = nameFixture((capability) => {
+      capability.stageTaskAllowedFields({ name: 'rollback' });
+      return {
+        then(_resolve: (value: unknown) => void, reject: (reason: unknown) => void) {
+          ran = true;
+          try {
+            capability.stageTaskAllowedFields({ name: 'late' });
+          } catch (error) {
+            lateError = error;
+            reject(error);
+          }
         },
-      ),
-    ).toThrow('must be synchronous');
+      };
+    });
+    const before = sourceState(f.sqlite);
+    expect(() => f.dispatcher.dispatch(commandName())).toThrow('must be synchronous');
     await nextTurn();
     expect(ran).toBe(true);
     expect(lateError).toMatchObject({ code: 'TRANSACTION_CLOSED' });
-    expect(rows(db)).toEqual(before);
-    expect(revisions(db)[0]).toEqual({ project_id: 'P1', revision: 1 });
+    expect(sourceState(f.sqlite)).toEqual(before);
   });
-  it('TX01-T06 valid synchronous two-record operation increments exactly once', () => {
-    const db = fixture();
-    const result = createSourceUnitOfWork(db.sqlite).run(input(), (tx) => {
-      tx.management.updateTaskName(task('A'), 'newA');
-      return tx.management.updateTaskName(task('B'), 'newB');
+
+  it('TX01-T06 a valid synchronous two-record dependency batch increments exactly once', () => {
+    const f = fixture();
+    const before = sourceState(f.sqlite);
+    const result = f.dispatcher.dispatch(commandBatch([edge('L2', 'B', 'C'), edge('L3', 'A', 'C')], []));
+    expect(result).toMatchObject({
+      projectId: 'P1',
+      revision: 2,
+      value: { inserted: ['L2', 'L3'], removed: [] },
+      savedChange: { revision: 2, changeKind: 'F3-06' },
     });
-    expect(result.revision).toBe(2);
-    expect(result.value.name).toBe('newB');
-    expect(revisions(db)).toEqual([
-      { project_id: 'P1', revision: 2 },
-      { project_id: 'P2', revision: 1 },
+    expect(sourceState(f.sqlite).task_dependencies).toMatchObject([
+      { dependency_id: 'L1', project_id: 'P1', prerequisite_id: 'A', dependent_id: 'B' },
+      { dependency_id: 'L2', project_id: 'P1', prerequisite_id: 'B', dependent_id: 'C' },
+      { dependency_id: 'L3', project_id: 'P1', prerequisite_id: 'A', dependent_id: 'C' },
     ]);
+    expect(sourceState(f.sqlite).tasks).toEqual(before.tasks);
+    expect(revision(f.sqlite)).toBe(2);
+    expect(revision(f.sqlite, 'P2')).toBe(1);
   });
-  it('TX01-T07 commit exception invalidates capabilities and rolls source/revision back', () => {
-    const db = fixture();
-    const before = rows(db);
-    let retained: ManagementRepository | undefined;
-    const exec = db.sqlite.exec.bind(db.sqlite);
-    vi.spyOn(db.sqlite, 'exec').mockImplementation((sql) => {
-      if (sql === 'COMMIT') throw new Error('injected commit failure');
-      return exec(sql);
+
+  it('TX01-T07 commit exception invalidates capabilities and confirms rollback', () => {
+    let retained: TaskNameCapability | undefined;
+    const f = fixture({
+      handlers: { 'F2-07': (capability) => {
+        retained = capability as TaskNameCapability;
+        retained.stageTaskAllowedFields({ name: 'mustrollback' });
+      } },
+      hooks: (sqlite) => ({ commit: () => {
+        expect(sqlite.inTransaction).toBe(true);
+        expect(sqlite.prepare("SELECT name FROM tasks WHERE task_id='A'").get()).toEqual({ name: 'mustrollback' });
+        throw new Error('injected commit failure');
+      } }),
     });
-    expect(() =>
-      createSourceUnitOfWork(db.sqlite).run(input(), (tx) => {
-        retained = tx.management;
-        tx.management.updateTaskName(task('A'), 'mustrollback');
-      }),
-    ).toThrow('injected commit failure');
-    expect(() => retained!.getTask(task('A'))).toThrow('inactive');
-    expect(rows(db)).toEqual(before);
-    expect(revisions(db)[0]).toEqual({ project_id: 'P1', revision: 1 });
-    expect(db.sqlite.inTransaction).toBe(false);
+    const before = sourceState(f.sqlite);
+    expect(() => f.dispatcher.dispatch(commandName())).toThrow('injected commit failure');
+    expectClosed(() => retained!.readTaskToUpdateFields());
+    expect(sourceState(f.sqlite)).toEqual(before);
+    expect(f.sqlite.inTransaction).toBe(false);
+    expect(f.uow.diagnostics()).toMatchObject([{ outcome: 'ROLLED_BACK' }]);
   });
-  it('TX01-T07 rollback exception quarantines adapter and closes connection without reusable capabilities', () => {
-    const db = fixture();
-    const filename = db.filename;
-    let retained: ManagementRepository | undefined;
-    const unit = createSourceUnitOfWork(db.sqlite);
-    const exec = db.sqlite.exec.bind(db.sqlite);
-    vi.spyOn(db.sqlite, 'exec').mockImplementation((sql) => {
-      if (sql === 'ROLLBACK') throw new Error('injected rollback failure');
-      return exec(sql);
-    });
-    expect(() =>
-      unit.run(input(), (tx) => {
-        retained = tx.management;
-        tx.management.updateTaskName(task('A'), 'mustrollback');
-        throw new Error('injected callback failure');
+
+  it('TX01-T07 rollback exception leaves outcome unknown and prevents capability or connection reuse', () => {
+    let retained: TaskNameCapability | undefined;
+    const f = fixture({
+      handlers: { 'F2-07': (capability) => {
+        retained = capability as TaskNameCapability;
+        retained.stageTaskAllowedFields({ name: 'mustrollback' });
+      } },
+      hooks: () => ({
+        beforeCommit: () => { throw new Error('injected transaction failure'); },
+        rollback: () => { throw new Error('injected rollback failure'); },
       }),
-    ).toThrow('connection quarantined');
-    expect(() => retained!.getTask(task('A'))).toThrow('inactive');
-    expect(db.sqlite.open).toBe(false);
-    expect(() => unit.run(input(), () => undefined)).toThrow('unavailable');
-    const reopened = openFoundationDatabase({
-      workspaceRoot: foundationWorkspaceRoot,
-      relativePath: relative(foundationWorkspaceRoot, filename),
-      mode: 'open-owned',
     });
-    opened.push(reopened);
-    expect(reopened.sqlite.prepare("SELECT name FROM tasks WHERE task_id='A'").get()).toEqual({
-      name: 'Synthetic A',
-    });
-    expect(revisions(reopened)[0]).toEqual({ project_id: 'P1', revision: 1 });
+    const before = sourceState(f.sqlite);
+    expect(() => f.dispatcher.dispatch(commandName())).toThrow(expect.objectContaining({
+      code: 'UNKNOWN_TRANSACTION_OUTCOME',
+      outcome: 'UNKNOWN',
+      diagnostic: expect.objectContaining({ outcome: 'UNKNOWN' }),
+      cause: expect.any(AggregateError),
+    }));
+    expectClosed(() => retained!.readTaskToUpdateFields());
+    expect(f.sqlite.open).toBe(false);
+    expectClosed(() => f.dispatcher.dispatch(commandName()));
+    expect(f.uow.diagnostics()).toMatchObject([{ outcome: 'UNKNOWN' }]);
+    const reopened = openOwnedDisposable(f.filename, { readonly: true });
+    try {
+      expect(sourceState(reopened)).toEqual(before);
+    } finally {
+      reopened.close();
+    }
   });
 });
 
-describe('TX-01 adversarial thenable inspection', () => {
+describe('TX-01 defensive thenable inspection', () => {
   it('TX01-T05 rejects a callable-then Proxy even when its has trap hides then', async () => {
-    const db = fixture();
-    const before = rows(db);
-    const rev = revisions(db);
     let lateError: unknown;
+    const f = nameFixture((capability) => {
+      capability.stageTaskAllowedFields({ name: 'rollback' });
+      const promise = Promise.resolve().then(() => {
+        try {
+          capability.stageTaskAllowedFields({ name: 'late' });
+        } catch (error) {
+          lateError = error;
+          throw error;
+        }
+      });
+      return new Proxy(promise, {
+        has: () => false,
+        get: (target, key) => key === 'then' ? target.then.bind(target) : Reflect.get(target, key),
+      });
+    });
+    const before = sourceState(f.sqlite);
     const unhandled: unknown[] = [];
     const listener = (reason: unknown) => unhandled.push(reason);
     process.on('unhandledRejection', listener);
     try {
-      expect(() =>
-        createSourceUnitOfWork(db.sqlite).run(
-          input(),
-          // @ts-expect-error Runtime adversarial PromiseLike input is deliberately forced through.
-          (tx) => {
-            tx.management.updateTaskName(task('A'), 'rollback');
-            const promise = Promise.resolve().then(() => {
-              try {
-                tx.management.updateTaskName(task('B'), 'late');
-              } catch (error) {
-                lateError = error;
-                throw error;
-              }
-            });
-            return new Proxy(promise, {
-              has: () => false,
-              get: (target, key) =>
-                key === 'then' ? target.then.bind(target) : Reflect.get(target, key),
-            });
-          },
-        ),
-      ).toThrow('must be synchronous');
+      expect(() => f.dispatcher.dispatch(commandName())).toThrow('must be synchronous');
       await nextTurn();
       expect(lateError).toMatchObject({ code: 'TRANSACTION_CLOSED' });
-      expect(rows(db)).toEqual(before);
-      expect(revisions(db)).toEqual(rev);
       expect(unhandled).toEqual([]);
+      expect(sourceState(f.sqlite)).toEqual(before);
     } finally {
       process.off('unhandledRejection', listener);
     }
   });
+
   it('TX01-T05 invalidates before inspecting a throwing then getter and rolls back', () => {
-    const db = fixture();
-    const before = rows(db);
-    let retained: ManagementRepository | undefined;
-    expect(() =>
-      createSourceUnitOfWork(db.sqlite).run(input(), (tx) => {
-        retained = tx.management;
-        tx.management.updateTaskName(task('A'), 'rollback');
-        return Object.defineProperty({}, 'then', {
-          get() {
-            expect(() => tx.management.getTask(task('A'))).toThrow('inactive');
-            throw new Error('injected then getter failure');
-          },
-        });
-      }),
-    ).toThrow('injected then getter failure');
-    expect(() => retained!.getTask(task('A'))).toThrow('inactive');
-    expect(rows(db)).toEqual(before);
-    expect(revisions(db)[0]).toEqual({ project_id: 'P1', revision: 1 });
+    let retained: TaskNameCapability | undefined;
+    const f = nameFixture((capability) => {
+      retained = capability;
+      capability.stageTaskAllowedFields({ name: 'rollback' });
+      return Object.defineProperty({}, 'then', {
+        get() {
+          expectClosed(() => capability.readTaskToUpdateFields());
+          throw new Error('injected then getter failure');
+        },
+      });
+    });
+    const before = sourceState(f.sqlite);
+    expect(() => f.dispatcher.dispatch(commandName())).toThrow('injected then getter failure');
+    expectClosed(() => retained!.readTaskToUpdateFields());
+    expect(sourceState(f.sqlite)).toEqual(before);
   });
 });
 
-describe('TX-02 scoped repositories with private coordinator control', () => {
+describe('TX-02 operation-scoped capabilities with private coordinator control', () => {
   it('TX02-T01 P1 cannot modify a TaskId from P2; both projects unchanged', () => {
-    const db = fixture();
-    const before = rows(db);
-    const rev = revisions(db);
-    expect(() =>
-      createSourceUnitOfWork(db.sqlite).run(input(), (tx) =>
-        tx.management.updateTaskName(task('X'), 'forbidden'),
-      ),
-    ).toThrow('Invalid or inaccessible task');
-    expect(rows(db)).toEqual(before);
-    expect(revisions(db)).toEqual(rev);
+    const f = fixture();
+    const before = sourceState(f.sqlite);
+    expect(() => f.dispatcher.dispatch(commandName('forbidden', 1, 'X'))).toThrow(expect.objectContaining({
+      code: 'INVALID_OR_INACCESSIBLE_TASK',
+    }));
+    expect(sourceState(f.sqlite)).toEqual(before);
   });
+
   it('TX02-T02 P1 cannot insert a dependency pointing at P2', () => {
-    const db = fixture();
-    const before = rows(db);
-    expect(() =>
-      createSourceUnitOfWork(db.sqlite).run(input(), (tx) =>
-        tx.dependencies.add(link('L2', 'A', 'X')),
-      ),
-    ).toThrow('Invalid or inaccessible task');
-    expect(rows(db)).toEqual(before);
-    expect(revisions(db)).toEqual([
-      { project_id: 'P1', revision: 1 },
-      { project_id: 'P2', revision: 1 },
-    ]);
-    expect(db.sqlite.prepare('SELECT count(*) AS n FROM task_dependencies').get()).toEqual({
-      n: 1,
-    });
+    const f = fixture();
+    const before = sourceState(f.sqlite);
+    expect(() => f.dispatcher.dispatch(commandInsert('L2', 'A', 'X'))).toThrow(expect.objectContaining({
+      code: 'INVALID_INPUT',
+      message: 'Complete final dependency graph rejected (MISSING_ENDPOINT).',
+    }));
+    expect(sourceState(f.sqlite)).toEqual(before);
   });
-  it('TX02-T03 API exposes only frozen management/dependency capabilities and plain DTO values', () => {
-    const db = fixture();
-    createSourceUnitOfWork(db.sqlite).run(input(), (tx) => {
-      expect(Object.keys(tx)).toEqual(['management', 'dependencies']);
-      expect(Object.keys(tx.management)).toEqual(['getTask', 'updateTaskName']);
-      expect(Object.keys(tx.dependencies)).toEqual(['list', 'add', 'remove']);
-      for (const object of [tx, tx.management, tx.dependencies]) {
-        expect(Object.isFrozen(object)).toBe(true);
-        for (const key of [
-          'database',
-          'sqlite',
-          'orm',
-          'prepare',
-          'exec',
-          'transaction',
-          'commit',
-          'rollback',
-          'begin',
-        ])
-          expect(key in object).toBe(false);
+
+  it('TX02-T03 handlers receive only frozen exact capabilities and plain DTO values', () => {
+    function expectSurface(capability: OperationCapability, allowed: string[]) {
+      expect(Object.keys(capability)).toEqual(allowed);
+      expect(Object.isFrozen(capability)).toBe(true);
+      for (const key of [
+        'database', 'sqlite', 'orm', 'prepare', 'exec', 'transaction',
+        'commit', 'rollback', 'begin', 'management', 'dependencies',
+      ]) {
+        expect(key in capability).toBe(false);
       }
-      const value = tx.management.updateTaskName(task('A'), 'plain');
-      expect(Object.isFrozen(value)).toBe(true);
-      expect(Object.values(value).every((v) => v === null || typeof v === 'string')).toBe(true);
-    });
+    }
+    const f = fixture({ handlers: {
+      'F2-07': (capability) => {
+        expectSurface(capability, ['readTaskToUpdateFields', 'stageTaskAllowedFields']);
+        const nameCapability = capability as TaskNameCapability;
+        const value = nameCapability.readTaskToUpdateFields();
+        expect(value).toEqual({ taskId: 'A', name: 'Synthetic A' });
+        expect(Object.isFrozen(value)).toBe(true);
+        expect(Object.values(value).every((field) => typeof field === 'string')).toBe(true);
+        nameCapability.stageTaskAllowedFields({ name: 'plain' });
+      },
+      'F3-06': (capability) => {
+        expectSurface(capability, ['stageDependencyInsert', 'stageDependencyRemove']);
+        const batch = capability as BatchCapability;
+        batch.stageDependencyRemove();
+        batch.stageDependencyInsert();
+      },
+    } });
+    const nameResult = f.dispatcher.dispatch(commandName('plain'));
+    expect(nameResult.value).toEqual({ taskId: 'A', name: 'plain' });
+    expect(Object.isFrozen(nameResult.value)).toBe(true);
+    const batchResult = f.dispatcher.dispatch(commandBatch([edge('L2', 'A', 'B')], ['L1'], 2));
+    expect(batchResult.value).toEqual({ inserted: ['L2'], removed: ['L1'] });
+    expect(Object.isFrozen(batchResult.value)).toBe(true);
   });
-  it('TX02-T04 independent COMMIT is inaccessible and attempted escape rolls back', () => {
-    const db = fixture();
-    const before = rows(db);
-    expect(() =>
-      createSourceUnitOfWork(db.sqlite).run(input(), (tx) => {
-        tx.management.updateTaskName(task('A'), 'mustrollback');
-        (tx as unknown as { exec(sql: string): void }).exec('COMMIT');
-      }),
-    ).toThrow();
-    expect(rows(db)).toEqual(before);
-    expect(revisions(db)[0]).toEqual({ project_id: 'P1', revision: 1 });
-  });
-  it('TX02-T05 multi-record mutation remains atomic, even if caller catches a repository denial', () => {
-    const db = fixture();
-    const before = rows(db);
-    expect(() =>
-      createSourceUnitOfWork(db.sqlite).run(input(), (tx) => {
-        tx.management.updateTaskName(task('A'), 'mustrollback');
-        try {
-          tx.management.updateTaskName(task('X'), 'forbidden');
-        } catch {
-          /* cannot convert failed atomic mutation into success */
-        }
-      }),
-    ).toThrow('Invalid or inaccessible task');
-    expect(rows(db)).toEqual(before);
-    expect(revisions(db)[0]).toEqual({ project_id: 'P1', revision: 1 });
-  });
-  it('TX02-T06 same-project cross-repository writes commit with exactly one revision', () => {
-    const db = fixture();
-    const result = createSourceUnitOfWork(db.sqlite).run(input(), (tx) => {
-      tx.management.updateTaskName(task('A'), 'newA');
-      tx.dependencies.remove(asDependencyId('L1'));
-      return tx.dependencies.add(link('L2', 'A', 'B'));
+
+  it('TX02-T04 an active handler has no independent commit and its attempted use rolls back', () => {
+    const handler = vi.fn((capability: TaskNameCapability) => {
+      capability.stageTaskAllowedFields({ name: 'mustrollback' });
+      expect('exec' in capability).toBe(false);
+      (capability as unknown as { exec(): void }).exec();
     });
-    expect(result.revision).toBe(2);
-    expect(result.value).toEqual({
-      dependencyId: 'L2',
-      projectId: 'P1',
-      prerequisiteId: 'A',
-      dependentId: 'B',
-    });
-    expect(revisions(db)).toEqual([
-      { project_id: 'P1', revision: 2 },
-      { project_id: 'P2', revision: 1 },
+    const f = nameFixture(handler);
+    const before = sourceState(f.sqlite);
+    expect(() => f.dispatcher.dispatch(commandName())).toThrow(TypeError);
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(sourceState(f.sqlite)).toEqual(before);
+    expect(f.uow.diagnostics()).toMatchObject([{ outcome: 'ROLLED_BACK' }]);
+  });
+
+  it('TX02-T05 a caught intent denial cannot turn a partially staged batch into success', () => {
+    const caught = vi.fn();
+    const f = fixture({ handlers: { 'F3-06': (capability) => {
+      const batch = capability as BatchCapability;
+      try {
+        batch.stageDependencyRemove();
+      } catch (error) {
+        caught(error);
+      }
+      expectClosed(() => batch.stageDependencyInsert());
+    } } });
+    const before = sourceState(f.sqlite);
+    expect(() => f.dispatcher.dispatch(commandBatch([edge('L2', 'A', 'B')], ['L1', 'missing']))).toThrow(
+      expect.objectContaining({ code: 'INVALID_OR_INACCESSIBLE_REFERENCE' }),
+    );
+    expect(caught).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ code: 'INVALID_OR_INACCESSIBLE_REFERENCE' }),
+    );
+    expect(sourceState(f.sqlite)).toEqual(before);
+    expect(f.uow.diagnostics()).toMatchObject([{ outcome: 'ROLLED_BACK' }]);
+  });
+
+  it('TX02-T06 rejects mixed operation input and commits a legal edge replacement with one revision', () => {
+    const f = fixture();
+    const before = sourceState(f.sqlite);
+    const rename = commandName('newA');
+    expect(() => f.dispatcher.dispatch({
+      ...rename,
+      payload: { ...rename.payload, inserts: [edge('L2', 'A', 'B')] },
+    })).toThrow(expect.objectContaining({ code: 'INVALID_INPUT' }));
+    expect(sourceState(f.sqlite)).toEqual(before);
+
+    const result = f.dispatcher.dispatch(commandBatch([edge('L2', 'A', 'B')], ['L1']));
+    expect(result).toMatchObject({ projectId: 'P1', revision: 2, value: { inserted: ['L2'], removed: ['L1'] } });
+    expect(sourceState(f.sqlite).task_dependencies).toMatchObject([
+      { dependency_id: 'L2', project_id: 'P1', prerequisite_id: 'A', dependent_id: 'B' },
     ]);
+    expect(sourceState(f.sqlite).tasks).toEqual(before.tasks);
+    expect(revision(f.sqlite)).toBe(2);
+    expect(revision(f.sqlite, 'P2')).toBe(1);
   });
+
   it('TX02-T07 alternate project fields and changing caller input cannot rebind scope', () => {
-    const db = fixture();
-    const original = input();
-    expect(() =>
-      createSourceUnitOfWork(db.sqlite).run(original, (tx) => {
-        original.projectId = asProjectId('P2');
-        return tx.dependencies.add({ ...link(), projectId: 'P2' } as Parameters<
-          SourceTransaction['dependencies']['add']
-        >[0]);
-      }),
-    ).toThrow('Unexpected dependency input field');
-    expect(revisions(db)).toEqual([
-      { project_id: 'P1', revision: 1 },
-      { project_id: 'P2', revision: 1 },
-    ]);
-    const accepted = input();
-    createSourceUnitOfWork(db.sqlite).run(accepted, (tx) => {
-      accepted.projectId = asProjectId('P2');
-      tx.management.updateTaskName(task('A'), 'scopedP1');
+    const requested = { ...commandName('scopedP1') };
+    const renameHandler = vi.fn((capability: TaskNameCapability) => {
+      requested.projectId = asProjectId('P2');
+      capability.stageTaskAllowedFields({ name: 'scopedP1' });
     });
-    expect(revisions(db)).toEqual([
-      { project_id: 'P1', revision: 2 },
-      { project_id: 'P2', revision: 1 },
-    ]);
+    const f = nameFixture(renameHandler);
+    const before = sourceState(f.sqlite);
+    const insert = commandInsert('L2', 'B', 'C');
+    expect(() => f.dispatcher.dispatch({
+      ...insert,
+      payload: { ...insert.payload, projectId: 'P2' },
+    })).toThrow(expect.objectContaining({ code: 'INVALID_INPUT', message: 'Unexpected input field.' }));
+    expect(sourceState(f.sqlite)).toEqual(before);
+    const result = f.dispatcher.dispatch(requested);
+    expect(renameHandler).toHaveBeenCalledTimes(1);
+    expect(requested.projectId).toBe('P2');
+    expect(result).toMatchObject({ projectId: 'P1', revision: 2, value: { taskId: 'A', name: 'scopedP1' } });
+    expect(f.sqlite.prepare("SELECT name FROM tasks WHERE task_id='A' AND project_id='P1'").get()).toEqual({ name: 'scopedP1' });
+    expect(revision(f.sqlite)).toBe(2);
+    expect(revision(f.sqlite, 'P2')).toBe(1);
   });
-  it('TX02-T08 active membership and injected authorization rechecked before writes', () => {
-    const db = fixture();
-    const unit = createSourceUnitOfWork(db.sqlite);
-    let ran = false;
-    expect(() =>
-      unit.run(
-        {
-          ...input(),
-          authorize: () => {
-            throw new Error('injected denial');
-          },
-        },
-        () => {
-          ran = true;
-        },
-      ),
-    ).toThrow('injected denial');
-    db.sqlite
-      .prepare(
-        "UPDATE project_members SET active=0,left_at='2026-10-30T01:00:00Z' WHERE member_id='M1'",
-      )
-      .run();
-    expect(() =>
-      unit.run(input(), () => {
-        ran = true;
-      }),
-    ).toThrow('Invalid or inaccessible project');
-    expect(ran).toBe(false);
-    expect(revisions(db)[0]).toEqual({ project_id: 'P1', revision: 1 });
+
+  it('TX02-T08 trusted policy and active membership are checked before granting write capability', () => {
+    const handler = vi.fn();
+    const f = fixture({ f3Enabled: false, handlers: { 'F3-04': handler } });
+    const before = sourceState(f.sqlite);
+    expect(() => f.dispatcher.dispatch(commandInsert())).toThrow(
+      expect.objectContaining({ code: 'FEATURE_NOT_ENABLED' }),
+    );
+    expect(sourceState(f.sqlite)).toEqual(before);
+
+    f.state.f3Enabled = true;
+    f.sqlite.prepare("UPDATE project_members SET active=0,left_at='2026-11-03T01:00:00Z' WHERE member_id='M1'").run();
+    const inactive = sourceState(f.sqlite);
+    expect(() => f.dispatcher.dispatch(commandInsert())).toThrow(
+      expect.objectContaining({ code: 'INVALID_OR_INACCESSIBLE_PROJECT' }),
+    );
+    expect(handler).not.toHaveBeenCalled();
+    expect(sourceState(f.sqlite)).toEqual(inactive);
   });
 });

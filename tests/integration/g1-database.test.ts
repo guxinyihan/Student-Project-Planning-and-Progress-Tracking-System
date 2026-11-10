@@ -1,33 +1,55 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { relative } from 'node:path';
-import { asProjectId, asRevision, asUserId, asTaskId } from '@group9/shared';
+import { asDependencyId, asProjectId, asRevision, asTaskId, asUserId } from '@group9/shared';
 import {
   openFoundationDatabase,
   type FoundationDatabase,
 } from '../../src/backend/persistence/connection.js';
 import { migrateFoundationDatabase } from '../../src/backend/persistence/migrate.js';
+import { createOperationDispatcher } from '../../src/backend/application/operation-dispatcher.js';
 import { readAuthorizedSnapshot } from '../../src/backend/application/snapshot-reader.js';
-import { SourceTransactionError } from '../../src/backend/application/unit-of-work.js';
+import {
+  SourceTransactionError,
+  type TaskNameCapability,
+} from '../../src/backend/application/unit-of-work.js';
 import { createSourceUnitOfWork } from '../../src/backend/persistence/source-unit-of-work.js';
+import {
+  commandBatch,
+  commandInsert,
+  commandName,
+  createHarnessFixture,
+  revision,
+  sourceState,
+} from '../fixtures/g1-b2-disposable-database.js';
 import {
   createSeededFoundationDatabase,
   foundationWorkspaceRoot,
 } from '../fixtures/g1-database.js';
 
-const opened: FoundationDatabase[] = [];
+const opened: Pick<FoundationDatabase, 'close'>[] = [];
 function fixture() {
   const db = createSeededFoundationDatabase();
   opened.push(db);
   return db;
 }
-const command = (revision = 1) => ({
-  verifiedActorId: asUserId('U1'),
-  projectId: asProjectId('P1'),
-  expectedRevision: asRevision(revision),
-  authorize: () => {
-    /* Explicit synthetic authorization only. */
-  },
-});
+function harness(options?: Parameters<typeof createHarnessFixture>[0]) {
+  const db = createHarnessFixture(options);
+  opened.push(db);
+  return db;
+}
+
+function expectSourceError(action: () => unknown, code: string, message: string) {
+  let failure: unknown;
+  try {
+    action();
+  } catch (error) {
+    failure = error;
+  }
+  expect(failure).toBeInstanceOf(SourceTransactionError);
+  expect(failure).toMatchObject({ code, message: expect.stringContaining(message) });
+  expect(failure).not.toHaveProperty('savedChange');
+}
+
 afterEach(() => {
   for (const db of opened.splice(0)) db.close();
 });
@@ -125,59 +147,118 @@ describe('G1 disposable SQLite and revision foundation (not business acceptance)
     ).toBe('0.10');
   });
 
-  it('G1-T08 commits two synthetic source writes and increments one project revision exactly once', () => {
-    const db = fixture();
-    const result = createSourceUnitOfWork(db.sqlite).run(command(), (tx) => {
-      tx.management.updateTaskName(asTaskId('A'), 'Changed A');
-      tx.management.updateTaskName(asTaskId('B'), 'Changed B');
-      return 'synthetic';
+  it('G1-T08 commits two bound dependency writes and increments one project revision exactly once', () => {
+    const db = harness();
+    const result = db.dispatcher.dispatch(
+      commandBatch(
+        [
+          {
+            dependencyId: asDependencyId('L2'),
+            prerequisiteId: asTaskId('A'),
+            dependentId: asTaskId('C'),
+          },
+          {
+            dependencyId: asDependencyId('L3'),
+            prerequisiteId: asTaskId('B'),
+            dependentId: asTaskId('C'),
+          },
+        ],
+        [],
+      ),
+    );
+    expect(result).toEqual({
+      ok: true,
+      projectId: 'P1',
+      revision: 2,
+      value: { inserted: ['L2', 'L3'], removed: [] },
+      savedChange: {
+        projectId: 'P1',
+        revision: 2,
+        changeKind: 'F3-06',
+        affectedTaskIds: ['A', 'B', 'C'],
+        changedFields: ['dependencies'],
+      },
     });
-    expect(result).toEqual({ value: 'synthetic', revision: 2 });
-    expect(db.sqlite.prepare('SELECT revision FROM projects WHERE project_id=?').get('P1')).toEqual(
-      { revision: 2 },
-    );
-    expect(db.sqlite.prepare('SELECT revision FROM projects WHERE project_id=?').get('P2')).toEqual(
-      { revision: 1 },
-    );
-  });
-
-  it('G1-T09 rejects conflicts and rolls back all source writes and revision on callback failure', () => {
-    const db = fixture();
-    expect(() => createSourceUnitOfWork(db.sqlite).run(command(2), () => 'never')).toThrow(
-      'Project changed',
-    );
-    expect(() =>
-      createSourceUnitOfWork(db.sqlite).run(command(), (tx) => {
-        tx.management.updateTaskName(asTaskId('A'), 'Must roll back');
-        throw new Error('synthetic injected failure');
-      }),
-    ).toThrow('synthetic injected failure');
-    expect(db.sqlite.prepare('SELECT name FROM tasks WHERE task_id=?').get('A')).toEqual({
-      name: 'Synthetic A',
-    });
-    expect(db.sqlite.prepare('SELECT revision FROM projects WHERE project_id=?').get('P1')).toEqual(
-      { revision: 1 },
-    );
+    expect(
+      db.sqlite
+        .prepare(
+          'SELECT dependency_id, project_id, prerequisite_id, dependent_id FROM task_dependencies ORDER BY dependency_id',
+        )
+        .all(),
+    ).toEqual([
+      { dependency_id: 'L1', project_id: 'P1', prerequisite_id: 'A', dependent_id: 'B' },
+      { dependency_id: 'L2', project_id: 'P1', prerequisite_id: 'A', dependent_id: 'C' },
+      { dependency_id: 'L3', project_id: 'P1', prerequisite_id: 'B', dependent_id: 'C' },
+    ]);
+    expect(revision(db.sqlite, 'P1')).toBe(2);
+    expect(revision(db.sqlite, 'P2')).toBe(1);
     expect(db.sqlite.inTransaction).toBe(false);
   });
 
-  it('G1-T09 rechecks active membership and injected operation authorization before writes', () => {
-    const db = fixture();
-    const denied = () => {
-      throw new SourceTransactionError('PERMISSION_DENIED', 'Denied by synthetic policy.');
-    };
-    expect(() =>
-      createSourceUnitOfWork(db.sqlite).run({ ...command(), authorize: denied }, () => 'never'),
-    ).toThrow('Denied by synthetic policy');
-    expect(() =>
-      createSourceUnitOfWork(db.sqlite).run(
-        { ...command(), verifiedActorId: asUserId('U2') },
-        () => 'never',
-      ),
-    ).toThrow('Invalid or inaccessible project.');
-    expect(() => createSourceUnitOfWork(db.sqlite).run(command(), () => 'no SQL')).toThrow(
-      'No source changes',
+  it('G1-T09 rejects conflicts and rolls back persisted source and revision on pre-COMMIT failure', () => {
+    const failure = new Error('Synthetic pre-COMMIT failure');
+    const db = harness({
+      hooks: (sqlite) => ({
+        beforeCommit: () => {
+          expect(sqlite.inTransaction).toBe(true);
+          expect(sqlite.prepare("SELECT name FROM tasks WHERE task_id='A'").get()).toEqual({
+            name: 'Must roll back',
+          });
+          expect(revision(sqlite)).toBe(2);
+          throw failure;
+        },
+      }),
+    });
+    const before = sourceState(db.sqlite);
+    expectSourceError(
+      () => db.dispatcher.dispatch(commandName('Must roll back', 2)),
+      'REVISION_CONFLICT',
+      'Project changed',
     );
+    expect(sourceState(db.sqlite)).toEqual(before);
+    expect(() => db.dispatcher.dispatch(commandName('Must roll back'))).toThrow(failure);
+    expect(sourceState(db.sqlite)).toEqual(before);
+    expect(db.uow.diagnostics()).toMatchObject([
+      { outcome: 'ROLLED_BACK' },
+      { outcome: 'ROLLED_BACK' },
+    ]);
+    expect(db.sqlite.inTransaction).toBe(false);
+  });
+
+  it('G1-T09 checks trusted policy and current membership before writes and rejects no-ops', () => {
+    const db = harness({ f3Enabled: false });
+    const before = sourceState(db.sqlite);
+    expectSourceError(
+      () => db.dispatcher.dispatch(commandInsert()),
+      'FEATURE_NOT_ENABLED',
+      'disabled by trusted application policy',
+    );
+    expect(sourceState(db.sqlite)).toEqual(before);
+
+    db.state.actorId = 'U2';
+    expectSourceError(
+      () => db.dispatcher.dispatch(commandName()),
+      'FORBIDDEN',
+      'current project Leader',
+    );
+    expect(sourceState(db.sqlite)).toEqual(before);
+
+    db.state.actorId = 'U3';
+    expectSourceError(
+      () => db.dispatcher.dispatch(commandName()),
+      'INVALID_OR_INACCESSIBLE_PROJECT',
+      'Invalid or inaccessible project.',
+    );
+    expect(sourceState(db.sqlite)).toEqual(before);
+
+    db.state.actorId = 'U1';
+    expectSourceError(
+      () => db.dispatcher.dispatch(commandName('Synthetic A')),
+      'INVALID_INPUT',
+      'No semantic source change',
+    );
+    expect(sourceState(db.sqlite)).toEqual(before);
+    expect(db.sqlite.inTransaction).toBe(false);
   });
 
   it('G1-T09 rejects an actor whose membership changed after an earlier authorized read', () => {
@@ -192,62 +273,106 @@ describe('G1 disposable SQLite and revision foundation (not business acceptance)
         "UPDATE project_members SET active=0,left_at='2026-10-30T01:00:00Z' WHERE member_id='M1'",
       )
       .run();
-    let ran = false;
-    expect(() =>
-      createSourceUnitOfWork(db.sqlite).run(command(), () => {
-        ran = true;
-      }),
-    ).toThrow('Invalid or inaccessible project.');
-    expect(ran).toBe(false);
-    expect(db.sqlite.prepare("SELECT revision FROM projects WHERE project_id='P1'").get()).toEqual({
-      revision: 1,
+    const before = sourceState(db.sqlite);
+    const handler = vi.fn();
+    const unitOfWork = createSourceUnitOfWork(db.sqlite, {
+      authority: {
+        resolveActor: () => asUserId('U1'),
+        runtimePolicy: () => ({
+          f3Enabled: true,
+          f4Enabled: false,
+          f6Enabled: false,
+          datePolicy: 'UNRESOLVED',
+        }),
+      },
     });
-  });
-
-  it('G1-T09 refuses source revision overflow and nested source transactions', () => {
-    const db = fixture();
-    db.sqlite
-      .prepare("UPDATE projects SET revision=? WHERE project_id='P1'")
-      .run(Number.MAX_SAFE_INTEGER);
-    let ran = false;
-    expect(() =>
-      createSourceUnitOfWork(db.sqlite).run(command(Number.MAX_SAFE_INTEGER), () => {
-        ran = true;
-      }),
-    ).toThrow('revision capacity reached');
-    expect(ran).toBe(false);
-    expect(db.sqlite.prepare("SELECT revision FROM projects WHERE project_id='P1'").get()).toEqual({
-      revision: Number.MAX_SAFE_INTEGER,
-    });
-    expect(() =>
-      db.sqlite.transaction(() =>
-        createSourceUnitOfWork(db.sqlite).run(command(), () => undefined),
-      )(),
-    ).toThrow('Nested source transactions');
+    const dispatcher = createOperationDispatcher(unitOfWork, { handlers: { 'F2-07': handler } });
+    expectSourceError(
+      () => dispatcher.dispatch(commandName()),
+      'INVALID_OR_INACCESSIBLE_PROJECT',
+      'Invalid or inaccessible project.',
+    );
+    expect(handler).not.toHaveBeenCalled();
+    expect(revision(db.sqlite)).toBe(1);
+    expect(sourceState(db.sqlite)).toEqual(before);
     expect(db.sqlite.inTransaction).toBe(false);
   });
 
-  it('G1-T09 rejects asynchronous callbacks before executing their body and rolls back thenables', () => {
-    const db = fixture();
-    let ran = false;
-    expect(() =>
-      // @ts-expect-error Deliberate runtime misuse: the new public port rejects asynchronous callbacks.
-      createSourceUnitOfWork(db.sqlite).run(command(), async () => {
-        ran = true;
-        return 'not allowed';
-      }),
-    ).toThrow('must be synchronous');
-    expect(ran).toBe(false);
-    expect(() =>
-      // @ts-expect-error Deliberate runtime misuse: Promise returns are rejected statically and at runtime.
-      createSourceUnitOfWork(db.sqlite).run(command(), (tx) => {
-        tx.management.updateTaskName(asTaskId('A'), 'Must roll back');
-        return Promise.resolve('not allowed');
-      }),
-    ).toThrow('must be synchronous');
-    expect(db.sqlite.prepare('SELECT name FROM tasks WHERE task_id=?').get('A')).toEqual({
-      name: 'Synthetic A',
+  it('G1-T09 refuses revision overflow and requires an independent source transaction', () => {
+    const handler = vi.fn();
+    const db = harness({ handlers: { 'F2-07': handler } });
+    db.sqlite
+      .prepare("UPDATE projects SET revision=? WHERE project_id='P1'")
+      .run(Number.MAX_SAFE_INTEGER);
+    const before = sourceState(db.sqlite);
+    const command = commandName('Must not persist', Number.MAX_SAFE_INTEGER);
+    expectSourceError(
+      () => db.dispatcher.dispatch(command),
+      'INVALID_INPUT',
+      'revision capacity reached',
+    );
+    expect(revision(db.sqlite)).toBe(Number.MAX_SAFE_INTEGER);
+    expect(sourceState(db.sqlite)).toEqual(before);
+    db.sqlite.transaction(() => {
+      expectSourceError(
+        () => db.dispatcher.dispatch(command),
+        'INVALID_INPUT',
+        'An independent source transaction is required',
+      );
+      expect(db.sqlite.inTransaction).toBe(true);
+    })();
+    expect(handler).not.toHaveBeenCalled();
+    expect(sourceState(db.sqlite)).toEqual(before);
+    expect(db.sqlite.inTransaction).toBe(false);
+  });
+
+  it('G1-T09 rejects legacy grants and async handlers and rolls back staged thenables', () => {
+    const db = harness({
+      handlers: {
+        'F2-07': (capability) => {
+          (capability as TaskNameCapability).stageTaskAllowedFields({ name: 'Must roll back' });
+          return Promise.resolve('not allowed');
+        },
+      },
     });
+    const before = sourceState(db.sqlite);
+    const authorize = vi.fn();
+    const legacyWork = vi.fn(() => undefined);
+    expectSourceError(
+      () =>
+        db.uow.run(
+          {
+            verifiedActorId: asUserId('U1'),
+            projectId: asProjectId('P1'),
+            expectedRevision: asRevision(1),
+            authorize,
+          },
+          legacyWork,
+        ),
+      'OPERATION_NOT_ENABLED',
+      'Generic callback/repository grants are disabled',
+    );
+    expect(authorize).not.toHaveBeenCalled();
+    expect(legacyWork).not.toHaveBeenCalled();
+
+    let asyncBodyRan = false;
+    expectSourceError(
+      () =>
+        db.uow.execute(commandName(), async () => {
+          asyncBodyRan = true;
+        }),
+      'INVALID_INPUT',
+      'trusted synchronous handler',
+    );
+    expect(asyncBodyRan).toBe(false);
+
+    expectSourceError(
+      () => db.dispatcher.dispatch(commandName()),
+      'INVALID_INPUT',
+      'Source transaction work must be synchronous',
+    );
+    expect(sourceState(db.sqlite)).toEqual(before);
+    expect(db.sqlite.inTransaction).toBe(false);
   });
 
   it('G1 coherent reader retains link IDs/historical authors without running F3 validation', () => {
