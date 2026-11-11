@@ -98,3 +98,10 @@ The Student Project Planning and Progress Tracking System explores how universit
 - [Project status and test results](docs/project-status/PROJECT_STATUS_2026-11-09.md)
 - [System overview](docs/architecture/SYSTEM_OVERVIEW.md)
 - [Development roadmap](docs/roadmap/DEVELOPMENT_ROADMAP.md)
+
+
+## Internal F2-03 capability milestone — 2026-11-11
+
+The shared project now includes the validated internal member-role capability. Both independent release workspaces passed build, TypeScript and 291/291 shared tests, including 6 F2-03 unit and 21 F2-03 SQLite integration cases.
+
+[Current project status](docs/project-status/GROUP9_CURRENT_PROJECT_STATUS_2026-11-11.md) · [Implementation backlog](docs/project-status/GROUP9_IMPLEMENTATION_BACKLOG_2026-11-11.csv) · [Integration readiness](docs/integration/GROUP9_F1_F6_INTEGRATION_READINESS_2026-11-11.md) · [Next actions](docs/project-status/GROUP9_NEXT_ACTIONS_2026-11-11.md) · [Internal capability contract](docs/round3/G1_A_OPERATION_CAPABILITIES_2026-11-11.md).

@@ -3,6 +3,7 @@ import type {
   DependencyView,
   MemberId,
   ProjectId,
+  ProjectRole,
   Revision,
   TaskId,
   TaskSnapshot,
@@ -56,7 +57,7 @@ export interface SourceUnitOfWork {
   diagnostics(): readonly TransactionDiagnostic[];
 }
 
-export type EnabledOperation = 'F2-07' | 'F3-04' | 'F3-05' | 'F3-06';
+export type EnabledOperation = 'F2-03' | 'F2-07' | 'F3-04' | 'F3-05' | 'F3-06';
 export interface InsertIntent {
   readonly dependencyId: DependencyId;
   readonly prerequisiteId: TaskId;
@@ -67,11 +68,15 @@ interface CommandScope {
   readonly expectedRevision: Revision;
 }
 export type InternalCommand = CommandScope & (
+  | { readonly operationId: 'F2-03'; readonly payload: Readonly<{ memberId: MemberId; role: ProjectRole }> }
   | { readonly operationId: 'F2-07'; readonly payload: Readonly<{ taskId: TaskId; name: string }> }
   | { readonly operationId: 'F3-04'; readonly payload: InsertIntent }
   | { readonly operationId: 'F3-05'; readonly payload: Readonly<{ dependencyId: DependencyId }> }
   | { readonly operationId: 'F3-06'; readonly payload: Readonly<{ inserts: readonly InsertIntent[]; removes: readonly DependencyId[] }> }
 );
+export interface MemberRoleCapability {
+  stageTargetRole(): void;
+}
 export interface TaskNameCapability {
   readTaskToUpdateFields(): Readonly<{ taskId: TaskId; name: string }>;
   stageTaskAllowedFields(input: Readonly<{ name: string }>): void;
@@ -79,7 +84,7 @@ export interface TaskNameCapability {
 export interface InsertCapability { stageDependencyInsert(): void }
 export interface RemoveCapability { stageDependencyRemove(): void }
 export type BatchCapability = InsertCapability & RemoveCapability;
-export type OperationCapability = Readonly<TaskNameCapability | InsertCapability | RemoveCapability | BatchCapability>;
+export type OperationCapability = Readonly<MemberRoleCapability | TaskNameCapability | InsertCapability | RemoveCapability | BatchCapability>;
 export interface InternalAuthority {
   /** Injected at the trusted composition root, not accepted in request/command data. */
   resolveActor(): UserId;
@@ -105,7 +110,13 @@ export interface CommittedOperation<T> {
   readonly changedFields: readonly string[];
   readonly value: T;
 }
+export interface MemberRoleChangeValue {
+  readonly memberId: MemberId;
+  readonly role: ProjectRole;
+  readonly updatedAt: string;
+}
 export type InternalMutationValue =
+  | MemberRoleChangeValue
   | Readonly<{ taskId: TaskId; name: string }>
   | Readonly<{ dependencyId: DependencyId; removed: boolean }>
   | Readonly<{ inserted: readonly DependencyId[]; removed: readonly DependencyId[] }>;

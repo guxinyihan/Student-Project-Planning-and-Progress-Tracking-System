@@ -1,5 +1,5 @@
 import type BetterSqlite3 from 'better-sqlite3';
-import { asDependencyId, asMemberId, asRevision, asTaskId, asUserId, type DependencyView, type TaskId } from '@group9/shared';
+import { asDependencyId, asMemberId, asRevision, asTaskId, asUserId, type DependencyView, type MemberId, type ProjectRole, type TaskId } from '@group9/shared';
 import { exactCapability, invalid, parseInternalCommand, record, taskName } from '../application/operation-capabilities.js';
 import { SourceTransactionError, UnknownTransactionOutcomeError, type ActiveSourceMember, type CommittedOperation, type InternalCommand, type InternalMutationValue, type OperationCapability, type SourceUnitOfWork, type SourceUnitOfWorkOptions, type TransactionDiagnostic } from '../application/unit-of-work.js';
 import { validateFinalCandidate } from './dependency-finalizer.js';
@@ -50,7 +50,7 @@ export function createSourceUnitOfWork(database: BetterSqlite3.Database, options
       if (!resolveActor || !runtimePolicy) fail('IDENTITY_NOT_CONFIGURED', 'Trusted internal authority is required.');
       if (typeof handler !== 'function' || handler.constructor.name === 'AsyncFunction') invalid('A trusted synchronous handler is required.');
       const command = parseInternalCommand(rawCommand);
-      const f3 = command.operationId !== 'F2-07';
+      const f3 = command.operationId.startsWith('F3-');
       let handlerActive = false;
       let hasPoison = false;
       let poisoned: unknown;
@@ -81,6 +81,25 @@ export function createSourceUnitOfWork(database: BetterSqlite3.Database, options
           namesBefore.set(id, row.name); namesAfter.set(id, row.name);
         }
         return Object.freeze({ taskId: id, name: namesAfter.get(id)! });
+      }
+      function requireOtherActiveLeader(memberId: MemberId): void {
+        const other = database.prepare(
+          `SELECT 1 FROM project_members
+           WHERE project_id=? AND member_id<>? AND active=1 AND left_at IS NULL AND role='LEADER'
+           LIMIT 1`,
+        ).get(command.projectId, memberId);
+        if (!other) fail('LAST_LEADER', 'The sole Leader cannot become a Member without a valid handoff.');
+      }
+      function boundRoleChange() {
+        if (command.operationId !== 'F2-03') invalid('Member role change capability is not granted.');
+        const { memberId, role } = command.payload;
+        const target = database.prepare(
+          'SELECT role FROM project_members WHERE project_id=? AND member_id=? AND active=1 AND left_at IS NULL',
+        ).get(command.projectId, memberId) as { role: ProjectRole } | undefined;
+        if (!target) fail('INVALID_OR_INACCESSIBLE_REFERENCE', 'Invalid or inaccessible active membership.');
+        if (target.role === role) invalid('No changes supplied.');
+        if (target.role === 'LEADER') requireOtherActiveLeader(memberId);
+        return Object.freeze({ memberId, role, previousRole: target.role });
       }
       const insertAll = (): void => {
         const intents = command.operationId === 'F3-04' ? [command.payload] : command.operationId === 'F3-06' ? command.payload.inserts : [];
@@ -114,8 +133,15 @@ export function createSourceUnitOfWork(database: BetterSqlite3.Database, options
         if (f3) {
           edgesBefore = Object.freeze((database.prepare('SELECT dependency_id AS dependencyId,project_id AS projectId,prerequisite_id AS prerequisiteId,dependent_id AS dependentId FROM task_dependencies WHERE project_id=? ORDER BY dependency_id').all(command.projectId) as DependencyView[]).map((r) => Object.freeze({ ...r })));
           for (const edge of edgesBefore) edgeCandidate.set(edge.dependencyId, edge);
-        } else boundTaskName();
+        } else if (command.operationId === 'F2-07') boundTaskName();
+        const roleChange = command.operationId === 'F2-03' ? boundRoleChange() : undefined;
+        let roleStaged = false;
         const capability = exactCapability(command.operationId, {
+          stageTargetRole: (...args) => guarded(() => {
+            zeroArguments(args);
+            if (!roleChange) invalid('Member role change capability is not granted.');
+            roleStaged = true;
+          }),
           readTaskToUpdateFields: (...args) => guarded(() => { zeroArguments(args); return boundTaskName(); }),
           stageTaskAllowedFields: (...args) => guarded(() => {
             if (args.length !== 1 || command.operationId !== 'F2-07') invalid('Only bound task-name input is allowed.');
@@ -137,13 +163,21 @@ export function createSourceUnitOfWork(database: BetterSqlite3.Database, options
           validateFinalCandidate(command.projectId, Object.freeze(tasks.map((t) => Object.freeze({ ...t }))), finalEdges);
         }
         const delta = detectSemanticDelta(namesBefore, namesAfter, edgesBefore, finalEdges);
-        if (!hasSemanticChanges(delta)) invalid('No semantic source change; updatedAt and Revision remain unchanged.');
+        const stagedRoleChange = roleStaged ? roleChange : undefined;
+        if (!stagedRoleChange && !hasSemanticChanges(delta)) invalid('No semantic source change; updatedAt and Revision remain unchanged.');
         synchronous(hooks.beforePersist?.());
         if (hasPoison) throw poisoned;
         const timestamp = new Date().toISOString();
         for (const removed of delta.removed) database.prepare('DELETE FROM task_dependencies WHERE project_id=? AND dependency_id=?').run(command.projectId, removed.dependencyId);
         for (const inserted of delta.inserted) database.prepare('INSERT INTO task_dependencies(dependency_id,project_id,prerequisite_id,dependent_id,created_at) VALUES (?,?,?,?,?)').run(inserted.dependencyId, command.projectId, inserted.prerequisiteId, inserted.dependentId, timestamp);
         for (const name of delta.taskNames) database.prepare('UPDATE tasks SET name=?,updated_at=? WHERE project_id=? AND task_id=?').run(name.afterName, timestamp, command.projectId, name.taskId);
+        if (stagedRoleChange) {
+          const updatedMember = database.prepare(
+            `UPDATE project_members SET role=?,updated_at=?
+             WHERE project_id=? AND member_id=? AND active=1 AND left_at IS NULL AND role=?`,
+          ).run(stagedRoleChange.role, timestamp, command.projectId, stagedRoleChange.memberId, stagedRoleChange.previousRole);
+          if (updatedMember.changes !== 1) fail('REVISION_CONFLICT', 'Membership changed; reload before saving.');
+        }
         const updated = database.prepare('UPDATE projects SET revision=revision+1,updated_at=? WHERE project_id=? AND revision=?').run(timestamp, command.projectId, command.expectedRevision);
         if (updated.changes !== 1) fail('REVISION_CONFLICT', 'Project changed; reload before saving.');
         synchronous(hooks.beforeCommit?.());
@@ -151,16 +185,33 @@ export function createSourceUnitOfWork(database: BetterSqlite3.Database, options
         checkPolicy();
         const finalActor = resolveActor(); synchronous(finalActor);
         if (asUserId(finalActor) !== actorId) fail('FORBIDDEN', 'Trusted actor changed during the operation.');
-        if (!database.prepare("SELECT 1 FROM project_members WHERE project_id=? AND user_id=? AND active=1 AND left_at IS NULL AND role='LEADER'").get(command.projectId, actorId)) fail('FORBIDDEN', 'Current authorization no longer permits this operation.');
+        if (stagedRoleChange) {
+          // Own demotion is the only role change that alters the authorized actor's role.
+          const expectedActorRole = stagedRoleChange.memberId === member.memberId ? stagedRoleChange.role : 'LEADER';
+          const actorStillActive = database.prepare(
+            `SELECT 1 FROM project_members
+             WHERE project_id=? AND user_id=? AND member_id=? AND active=1 AND left_at IS NULL AND role=?`,
+          ).get(command.projectId, actorId, member.memberId, expectedActorRole);
+          if (!actorStillActive) fail('FORBIDDEN', 'Current authorization no longer permits this operation.');
+          const targetStillMatches = database.prepare(
+            `SELECT 1 FROM project_members
+             WHERE project_id=? AND member_id=? AND active=1 AND left_at IS NULL AND role=? AND updated_at=?`,
+          ).get(command.projectId, stagedRoleChange.memberId, stagedRoleChange.role, timestamp);
+          if (!targetStillMatches) fail('REVISION_CONFLICT', 'Membership changed; reload before saving.');
+          if (stagedRoleChange.previousRole === 'LEADER') requireOtherActiveLeader(stagedRoleChange.memberId);
+        } else if (!database.prepare("SELECT 1 FROM project_members WHERE project_id=? AND user_id=? AND active=1 AND left_at IS NULL AND role='LEADER'").get(command.projectId, actorId)) {
+          fail('FORBIDDEN', 'Current authorization no longer permits this operation.');
+        }
         if (hasPoison) throw poisoned;
         let value: InternalMutationValue;
-        if (command.operationId === 'F2-07') value = Object.freeze({ taskId: command.payload.taskId, name: namesAfter.get(command.payload.taskId)! });
+        if (stagedRoleChange) value = Object.freeze({ memberId: stagedRoleChange.memberId, role: stagedRoleChange.role, updatedAt: timestamp });
+        else if (command.operationId === 'F2-07') value = Object.freeze({ taskId: command.payload.taskId, name: namesAfter.get(command.payload.taskId)! });
         else if (command.operationId === 'F3-04') value = Object.freeze({ dependencyId: command.payload.dependencyId, removed: false });
         else if (command.operationId === 'F3-05') value = Object.freeze({ dependencyId: command.payload.dependencyId, removed: true });
         else value = Object.freeze({ inserted: Object.freeze(delta.inserted.map((e) => asDependencyId(e.dependencyId))), removed: Object.freeze(delta.removed.map((e) => asDependencyId(e.dependencyId))) });
         const affected = new Set<TaskId>(delta.taskNames.map((t) => asTaskId(t.taskId)));
         for (const edge of [...delta.inserted, ...delta.removed]) { affected.add(asTaskId(edge.prerequisiteId)); affected.add(asTaskId(edge.dependentId)); }
-        const receipt: CommittedOperation<InternalMutationValue> = Object.freeze({ kind: 'COMMITTED', projectId: command.projectId, operationId: command.operationId, revision: asRevision(current.revision + 1), value, changedFields: Object.freeze(f3 ? ['dependencies'] : ['name']), affectedTaskIds: Object.freeze([...affected].sort()) });
+        const receipt: CommittedOperation<InternalMutationValue> = Object.freeze({ kind: 'COMMITTED', projectId: command.projectId, operationId: command.operationId, revision: asRevision(current.revision + 1), value, changedFields: Object.freeze(stagedRoleChange ? ['role'] : f3 ? ['dependencies'] : ['name']), affectedTaskIds: Object.freeze([...affected].sort()) });
         commitAttempted = true;
         if (hooks.commit) synchronous(hooks.commit()); else database.exec('COMMIT');
         if (hasPoison) throw poisoned;

@@ -1,4 +1,4 @@
-import { asDependencyId, asProjectId, asRevision, asTaskId } from '@group9/shared';
+import { asDependencyId, asMemberId, asProjectId, asRevision, asTaskId } from '@group9/shared';
 import {
   SourceTransactionError,
   type EnabledOperation,
@@ -13,9 +13,10 @@ export const OPERATION_CATALOG = Object.freeze([
   'F3-01', 'F3-02', 'F3-03', 'F3-04', 'F3-05', 'F3-06',
   'F456-01', 'F456-02', 'F456-03', 'F456-04', 'F456-05',
 ] as const);
-export const ENABLED_OPERATIONS: readonly EnabledOperation[] = Object.freeze(['F2-07', 'F3-04', 'F3-05', 'F3-06']);
+export const ENABLED_OPERATIONS: readonly EnabledOperation[] = Object.freeze(['F2-03', 'F2-07', 'F3-04', 'F3-05', 'F3-06']);
 export const G1_A_EXTERNAL_API_EXPOSURE = false as const;
 export const CAPABILITY_METHODS = Object.freeze({
+  'F2-03': Object.freeze(['stageTargetRole']),
   'F2-07': Object.freeze(['readTaskToUpdateFields', 'stageTaskAllowedFields']),
   'F3-04': Object.freeze(['stageDependencyInsert']),
   'F3-05': Object.freeze(['stageDependencyRemove']),
@@ -70,6 +71,12 @@ export function parseInternalCommand(value: unknown): InternalCommand {
     throw new SourceTransactionError('OPERATION_NOT_ENABLED', 'Operation is not enabled in G1-A.');
   const scope = { projectId: asProjectId(p.projectId), expectedRevision: asRevision(p.expectedRevision) };
   switch (p.operationId) {
+    case 'F2-03': {
+      const q = record(p.payload, ['memberId', 'role']);
+      if (q.role !== 'LEADER' && q.role !== 'MEMBER') invalid('Role must be LEADER or MEMBER.');
+      const payload = Object.freeze({ memberId: asMemberId(q.memberId), role: q.role });
+      return Object.freeze({ ...scope, operationId: 'F2-03', payload });
+    }
     case 'F2-07': {
       const q = record(p.payload, ['taskId', 'name']);
       return Object.freeze({ ...scope, operationId: 'F2-07', payload: Object.freeze({ taskId: asTaskId(q.taskId), name: taskName(q.name) }) });

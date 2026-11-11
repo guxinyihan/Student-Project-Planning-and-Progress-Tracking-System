@@ -1,6 +1,6 @@
 import { internalMutationResult } from './mutation-result-adapter.js';
 import { ENABLED_OPERATIONS, G1_A_EXTERNAL_API_EXPOSURE, parseInternalCommand, record } from './operation-capabilities.js';
-import { type BatchCapability, type EnabledOperation, type InsertCapability, type InternalCommand, type OperationCapability, type RemoveCapability, type SourceUnitOfWork, type TaskNameCapability } from './unit-of-work.js';
+import { type BatchCapability, type EnabledOperation, type InsertCapability, type InternalCommand, type MemberRoleCapability, type OperationCapability, type RemoveCapability, type SourceUnitOfWork, type TaskNameCapability } from './unit-of-work.js';
 
 export type InternalHandler = (capability: OperationCapability, command: InternalCommand) => unknown;
 export interface DispatcherOptions {
@@ -8,6 +8,7 @@ export interface DispatcherOptions {
   readonly handlers?: Partial<Record<EnabledOperation, InternalHandler>>;
 }
 const defaults: Readonly<Record<EnabledOperation, InternalHandler>> = Object.freeze({
+  'F2-03': (cap) => { (cap as MemberRoleCapability).stageTargetRole(); },
   'F2-07': (cap, command) => {
     if (command.operationId !== 'F2-07') throw new Error('Dispatcher binding mismatch.');
     (cap as TaskNameCapability).stageTaskAllowedFields({ name: command.payload.name });

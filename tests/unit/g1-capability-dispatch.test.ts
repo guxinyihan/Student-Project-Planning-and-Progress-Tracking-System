@@ -8,12 +8,21 @@ import {
 import type { BatchCapability, EnabledOperation, InsertCapability, OperationCapability, RemoveCapability, TaskNameCapability } from '../../src/backend/application/unit-of-work.js';
 import { commandBatch, commandInsert, commandName, commandRemove, createHarnessFixture, isolatedSourceRoot, sourceState } from '../fixtures/g1-b2-disposable-database.js';
 
+import { commandRole } from '../fixtures/g1-f203-command.js';
+
 const fixtures: ReturnType<typeof createHarnessFixture>[] = [];
 const fixture = (options: Parameters<typeof createHarnessFixture>[0] = {}) => { const f = createHarnessFixture(options); fixtures.push(f); return f; };
 afterEach(() => { for (const f of fixtures.splice(0)) f.close(); });
-const commandFor = (id: EnabledOperation) => id === 'F2-07' ? commandName() : id === 'F3-04' ? commandInsert() : id === 'F3-05' ? commandRemove() : commandBatch([commandInsert().payload as Parameters<typeof commandBatch>[0][number]], ['L1']);
+function commandFor(id: EnabledOperation) {
+  if (id === 'F2-03') return commandRole();
+  if (id === 'F2-07') return commandName();
+  if (id === 'F3-04') return commandInsert();
+  if (id === 'F3-05') return commandRemove();
+  return commandBatch([commandInsert().payload as Parameters<typeof commandBatch>[0][number]], ['L1']);
+}
 function stage(id: EnabledOperation, cap: OperationCapability): void {
-  if (id === 'F2-07') (cap as TaskNameCapability).stageTaskAllowedFields({ name: 'Renamed A' });
+  if (id === 'F2-03') (cap as { stageTargetRole(): void }).stageTargetRole();
+  else if (id === 'F2-07') (cap as TaskNameCapability).stageTaskAllowedFields({ name: 'Renamed A' });
   else if (id === 'F3-04') (cap as InsertCapability).stageDependencyInsert();
   else if (id === 'F3-05') (cap as RemoveCapability).stageDependencyRemove();
   else { (cap as BatchCapability).stageDependencyRemove(); (cap as BatchCapability).stageDependencyInsert(); }
@@ -33,10 +42,10 @@ describe('G1-A trusted internal dispatch and exact capabilities', () => {
     });
     expect(formatted).toBe('');
   }, 60_000);
-  it('retains the 27-row catalog but enables only four internal harness operations', () => {
+  it('retains the 27-row catalog but enables only the five approved internal harness operations', () => {
     expect(OPERATION_CATALOG).toHaveLength(27); expect(new Set(OPERATION_CATALOG).size).toBe(27);
     expect(OPERATION_CATALOG.filter((x) => x !== 'F1-04')).toHaveLength(26);
-    expect(ENABLED_OPERATIONS).toEqual(['F2-07', 'F3-04', 'F3-05', 'F3-06']); expect(G1_A_EXTERNAL_API_EXPOSURE).toBe(false);
+    expect(ENABLED_OPERATIONS).toEqual(['F2-03', 'F2-07', 'F3-04', 'F3-05', 'F3-06']); expect(G1_A_EXTERNAL_API_EXPOSURE).toBe(false);
   });
   it('denies all unenabled catalog rows, including Bootstrap and private Finalizer IDs', () => {
     const f = fixture(); const before = sourceState(f.sqlite);

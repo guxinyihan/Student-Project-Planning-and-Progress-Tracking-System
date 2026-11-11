@@ -5,9 +5,10 @@ import {
   type MutationResult,
   type SavedChange,
 } from '@group9/shared';
+import { ENABLED_OPERATIONS } from './operation-capabilities.js';
 import { SourceTransactionError, type CommittedOperation } from './unit-of-work.js';
 
-const enabledOperations = new Set(['F2-07', 'F3-04', 'F3-05', 'F3-06']);
+const enabledOperations = new Set(ENABLED_OPERATIONS);
 
 function invalidCommit(): SourceTransactionError {
   return new SourceTransactionError(
