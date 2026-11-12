@@ -1,8 +1,10 @@
 import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 import react from '@vitejs/plugin-react';
 import { defineConfig, loadEnv } from 'vite';
 
 const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url));
+const frontendRoot = fileURLToPath(new URL('.', import.meta.url));
 
 function backendTarget(value: string): string {
   let target: URL;
@@ -36,6 +38,14 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    build: {
+      rollupOptions: {
+        input: {
+          main: resolve(frontendRoot, 'index.html'),
+          monitoringPrototype: resolve(frontendRoot, 'monitoring-preview.html'),
+        },
+      },
+    },
     server: { host: '127.0.0.1', port: 5173, strictPort: true, proxy },
     preview: { host: '127.0.0.1', port: 4173, strictPort: true, proxy },
   };
